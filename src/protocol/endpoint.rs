@@ -301,9 +301,19 @@ mod tests {
             "/tests/fixtures/endpoint-snapshot-v1.json"
         )))
         .unwrap();
-        assert_eq!(snapshot.workspaces[0].color, None);
+        let workspace = &snapshot.workspaces[0];
+        assert_eq!(
+            (
+                workspace.color.as_deref(),
+                workspace.background_tint,
+                workspace.custom_color
+            ),
+            (None, false, false)
+        );
 
         snapshot.workspaces[0].color = Some("#59d4cd".into());
+        snapshot.workspaces[0].background_tint = true;
+        snapshot.workspaces[0].custom_color = true;
         let ServerMessage::EndpointControl { data, .. } = snapshot_message(&snapshot).unwrap()
         else {
             panic!("snapshot should use endpoint control");

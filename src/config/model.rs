@@ -980,6 +980,9 @@ pub struct UiConfig {
     pub pane_gaps: bool,
     /// Show agent labels in split pane borders when no manual pane label is set. Default: false.
     pub show_agent_labels_on_pane_borders: bool,
+    /// Show the directory a pane started in, with `~` for home, in its border
+    /// in place of the agent label when no manual pane label is set. Default: false.
+    pub show_cwd_on_pane_borders: bool,
     /// Hide the tab row when the workspace has one tab. Default: false.
     pub hide_tab_bar_when_single_tab: bool,
     /// Desktop tab row placement. Default: top.
@@ -1003,12 +1006,44 @@ pub struct UiConfig {
     /// Accent color for highlights, borders, and navigation UI.
     /// Accepts hex (#89b4fa), named colors (cyan, blue), or RGB (rgb(137,180,250)).
     pub accent: String,
-    /// Give each newly created workspace the least-used color swatch. Default: false.
-    pub auto_workspace_colors: bool,
+    /// Automatic and path-based workspace colors.
+    pub workspace_colors: WorkspaceColorsConfig,
     /// Optional visual toast notifications for background workspace events.
     pub toast: ToastConfig,
     /// Play sounds when agents change state in background workspaces.
     pub sound: SoundConfig,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct WorkspaceColorsConfig {
+    /// Give each newly created workspace that no rule colors the least-used swatch. Default: false.
+    pub auto: bool,
+    /// Tint the background of colored workspaces unless they or their rule choose otherwise.
+    /// Default: false.
+    pub background: bool,
+    /// Color workspaces whose directory is inside a rule's path; the most specific rule wins.
+    pub rules: Vec<WorkspaceColorRule>,
+}
+
+/// A missing value, or a `path` or `color` string that is not valid, makes
+/// Herdr ignore only this rule, with a diagnostic. A value of the wrong TOML
+/// type fails the config parse, as for any other key.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct WorkspaceColorRule {
+    /// Absolute directory, or one under `~`.
+    pub path: String,
+    /// `#rrggbb`, `#rgb`, or a swatch name.
+    pub color: String,
+    /// Overrides `ui.workspace_colors.background` for workspaces this rule matches.
+    pub background: Option<bool>,
+}
+
+impl WorkspaceColorsConfig {
+    pub(crate) fn diagnostics(&self) -> Vec<String> {
+        crate::workspace::color::WorkspaceColorRules::resolve(&self.rules).1
+    }
 }
 
 /// Cursor shape (DECSCUSR) used for the forced IME anchor.
@@ -1220,6 +1255,7 @@ impl Default for UiConfig {
             pane_scrollbars: true,
             pane_gaps: true,
             show_agent_labels_on_pane_borders: false,
+            show_cwd_on_pane_borders: false,
             hide_tab_bar_when_single_tab: false,
             tab_bar_position: TabBarPositionConfig::Top,
             tab_bar_right: Vec::new(),
@@ -1230,7 +1266,7 @@ impl Default for UiConfig {
             status_indicators: StatusIndicatorStyle::Dots,
             sidebar: SidebarConfig::default(),
             accent: "cyan".into(),
-            auto_workspace_colors: false,
+            workspace_colors: WorkspaceColorsConfig::default(),
             toast: ToastConfig::default(),
             sound: SoundConfig::default(),
         }
@@ -1528,6 +1564,7 @@ status_indicators = "symbols"
         assert!(default_config.ui.pane_scrollbars);
         assert!(default_config.ui.pane_gaps);
         assert!(!default_config.ui.show_agent_labels_on_pane_borders);
+        assert!(!default_config.ui.show_cwd_on_pane_borders);
         assert!(!default_config.ui.hide_tab_bar_when_single_tab);
         assert_eq!(
             default_config.ui.tab_bar_position,
@@ -1543,6 +1580,7 @@ pane_outer_borders = false
 pane_scrollbars = false
 pane_gaps = true
 show_agent_labels_on_pane_borders = true
+show_cwd_on_pane_borders = true
 hide_tab_bar_when_single_tab = true
 tab_bar_position = "bottom"
 tab_bar_right = [
@@ -1560,6 +1598,7 @@ tab_bar_right_separator = " · "
         assert!(!config.ui.pane_scrollbars);
         assert!(config.ui.pane_gaps);
         assert!(config.ui.show_agent_labels_on_pane_borders);
+        assert!(config.ui.show_cwd_on_pane_borders);
         assert!(config.ui.hide_tab_bar_when_single_tab);
         assert_eq!(config.ui.tab_bar_position, TabBarPositionConfig::Bottom);
         assert_eq!(config.ui.tab_bar_right.len(), 5);
@@ -1610,16 +1649,77 @@ prompt_new_workspace_name = true
     }
 
     #[test]
-    fn auto_workspace_colors_defaults_off_and_parses() {
+    fn workspace_colors_default_off_and_parse_rules() {
         let default_config = Config::default();
-        assert!(!default_config.ui.auto_workspace_colors);
+        let defaults = &default_config.ui.workspace_colors;
+        assert!(!defaults.auto && !defaults.background && defaults.rules.is_empty());
 
+        let toml = r##"
+[ui.workspace_colors]
+auto = true
+background = true
+
+[[ui.workspace_colors.rules]]
+path = "~/github/mns"
+color = "green"
+
+[[ui.workspace_colors.rules]]
+path = "~/github/mns/API-PLATFORM/ADEPT"
+color = "#f38ba8"
+background = false
+"##;
+        let config: Config = toml::from_str(toml).unwrap();
+        let colors = &config.ui.workspace_colors;
+        assert!(colors.auto && colors.background);
+        let rules = colors
+            .rules
+            .iter()
+            .map(|rule| (rule.path.as_str(), rule.color.as_str(), rule.background))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rules,
+            [
+                ("~/github/mns", "green", None),
+                ("~/github/mns/API-PLATFORM/ADEPT", "#f38ba8", Some(false))
+            ]
+        );
+        assert!(config.collect_diagnostics().is_empty());
+    }
+
+    #[test]
+    fn invalid_workspace_color_rules_are_diagnosed_without_resetting_the_config() {
         let toml = r#"
 [ui]
-auto_workspace_colors = true
+confirm_close = false
+
+[[ui.workspace_colors.rules]]
+path = "relative/dir"
+color = "green"
+
+[[ui.workspace_colors.rules]]
+path = "~/api"
+color = "cyan"
+
+[[ui.workspace_colors.rules]]
+color = "teal"
+
+[[ui.workspace_colors.rules]]
+path = "~/web"
+color = "teal"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
-        assert!(config.ui.auto_workspace_colors);
+        assert!(!config.ui.confirm_close);
+        assert_eq!(config.ui.workspace_colors.rules.len(), 4);
+
+        let diagnostics = config.collect_diagnostics();
+        assert_eq!(diagnostics.len(), 3, "{diagnostics:?}");
+        assert!(diagnostics[0].starts_with("ui.workspace_colors.rules[0] path \"relative/dir\""));
+        assert!(diagnostics[1].starts_with("ui.workspace_colors.rules[1] color \"cyan\""));
+        assert!(diagnostics[1].contains("rose, orange"));
+        assert!(diagnostics[2].starts_with("ui.workspace_colors.rules[2] path \"\""));
+        assert!(diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.ends_with("; ignoring rule")));
     }
 
     #[test]

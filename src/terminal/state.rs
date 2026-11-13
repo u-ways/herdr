@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 // Effective state arbitration is intentionally centralized here. Full lifecycle
@@ -121,6 +121,14 @@ struct RecentAgentProcessExit {
     observed_at: Instant,
 }
 
+/// What a pane border shows. A narrow border keeps the end of a path and the
+/// start of any other label.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BorderLabel {
+    Text(String),
+    Path(String),
+}
+
 /// Pure state for a server-owned terminal.
 ///
 /// During the migration this is still one-to-one with a pane-backed PTY, but
@@ -129,6 +137,11 @@ struct RecentAgentProcessExit {
 pub struct TerminalState {
     pub id: TerminalId,
     pub cwd: PathBuf,
+    /// The directory the terminal was launched in. Unlike `cwd`, shell cwd
+    /// reports do not move it, and snapshots keep it across restarts.
+    start_cwd: PathBuf,
+    /// `start_cwd` with `~` for home, for pane borders.
+    start_dir_label: String,
     pub detected_agent: Option<Agent>,
     pub fallback_state: AgentState,
     fallback_visible_blocker: bool,
@@ -168,6 +181,8 @@ impl TerminalState {
     pub fn new(id: TerminalId, cwd: PathBuf) -> Self {
         Self {
             id,
+            start_dir_label: home_abbreviated(&cwd),
+            start_cwd: cwd.clone(),
             cwd,
             detected_agent: None,
             fallback_state: AgentState::Unknown,
@@ -2388,17 +2403,40 @@ impl TerminalState {
         }
     }
 
-    pub fn border_label(&self, show_agent_labels: bool) -> Option<String> {
-        self.effective_title().or_else(|| {
-            self.manual_label.clone().or_else(|| {
+    /// Sets `cwd` for a terminal about to be relaunched there, which is then
+    /// its start directory.
+    pub fn set_launch_cwd(&mut self, cwd: PathBuf) {
+        self.set_start_cwd(cwd.clone());
+        self.cwd = cwd;
+    }
+
+    pub fn start_cwd(&self) -> &Path {
+        &self.start_cwd
+    }
+
+    /// Sets the start directory alone, for a restored pane whose shell has
+    /// since moved.
+    pub fn set_start_cwd(&mut self, start_cwd: PathBuf) {
+        self.start_dir_label = home_abbreviated(&start_cwd);
+        self.start_cwd = start_cwd;
+    }
+
+    /// Reported title, else manual label, else the start directory when
+    /// `show_cwd`, else the agent label when `show_agent_labels`.
+    pub fn border_label(&self, show_cwd: bool, show_agent_labels: bool) -> Option<BorderLabel> {
+        self.effective_title()
+            .or_else(|| self.manual_label.clone())
+            .map(BorderLabel::Text)
+            .or_else(|| show_cwd.then(|| BorderLabel::Path(self.start_dir_label.clone())))
+            .or_else(|| {
                 show_agent_labels
                     .then(|| {
                         self.effective_display_agent()
                             .or_else(|| self.effective_agent_label().map(str::to_string))
                     })
                     .flatten()
+                    .map(BorderLabel::Text)
             })
-        })
     }
 
     fn recompute_effective_state(
@@ -2447,6 +2485,16 @@ impl TerminalState {
 
 pub(crate) fn stabilize_agent_detection(detection: crate::detect::AgentDetection) -> AgentState {
     detection.state
+}
+
+/// `path` with a leading home directory written as `~`.
+fn home_abbreviated(path: &Path) -> String {
+    let home = crate::worktree::expand_tilde_path("~");
+    match path.strip_prefix(&home) {
+        Ok(rest) if rest.as_os_str().is_empty() => "~".into(),
+        Ok(rest) => Path::new("~").join(rest).display().to_string(),
+        Err(_) => path.display().to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -4236,24 +4284,90 @@ mod tests {
         assert_eq!(terminal.state, AgentState::Working);
     }
 
+    fn text(label: &str) -> Option<BorderLabel> {
+        Some(BorderLabel::Text(label.into()))
+    }
+
     #[test]
     fn border_label_prefers_manual_label_over_agent_label() {
         let mut terminal = test_terminal();
         terminal.set_detected_state(Some(Agent::Claude), AgentState::Idle);
 
-        assert_eq!(terminal.border_label(false), None);
-        assert_eq!(terminal.border_label(true).as_deref(), Some("claude"));
+        assert_eq!(terminal.border_label(false, false), None);
+        assert_eq!(terminal.border_label(false, true), text("claude"));
 
         terminal.set_manual_label(" reviewer ".into());
-        assert_eq!(terminal.border_label(false).as_deref(), Some("reviewer"));
-        assert_eq!(terminal.border_label(true).as_deref(), Some("reviewer"));
+        assert_eq!(terminal.border_label(false, false), text("reviewer"));
+        assert_eq!(terminal.border_label(false, true), text("reviewer"));
 
         terminal.set_manual_label("   ".into());
-        assert_eq!(terminal.border_label(true).as_deref(), Some("claude"));
+        assert_eq!(terminal.border_label(false, true), text("claude"));
 
         terminal.set_manual_label("reviewer".into());
         terminal.clear_manual_label();
-        assert_eq!(terminal.border_label(true).as_deref(), Some("claude"));
+        assert_eq!(terminal.border_label(false, true), text("claude"));
+    }
+
+    #[test]
+    fn border_label_puts_the_start_directory_between_manual_and_agent_labels() {
+        let mut terminal = test_terminal();
+        let start = Some(BorderLabel::Path("/tmp".into()));
+        assert_eq!(terminal.border_label(true, false), start);
+
+        terminal.set_detected_state(Some(Agent::Claude), AgentState::Idle);
+        assert_eq!(terminal.border_label(true, true), start);
+        assert_eq!(terminal.border_label(false, true), text("claude"));
+
+        terminal.set_manual_label("reviewer".into());
+        assert_eq!(terminal.border_label(true, true), text("reviewer"));
+    }
+
+    #[test]
+    fn start_directory_label_writes_home_as_tilde() {
+        let home = crate::worktree::expand_tilde_path("~");
+        let outside = home
+            .parent()
+            .expect("tests need a home directory below the root");
+        let label = |cwd: PathBuf| match TerminalState::new(TerminalId::alloc(), cwd)
+            .border_label(true, false)
+        {
+            Some(BorderLabel::Path(path)) => path,
+            other => panic!("expected a path label, got {other:?}"),
+        };
+
+        assert_eq!(label(home.clone()), "~");
+        assert_eq!(
+            label(home.join("github").join("mns")),
+            Path::new("~")
+                .join("github")
+                .join("mns")
+                .display()
+                .to_string()
+        );
+        // Only whole components match: a sibling sharing the prefix keeps its path.
+        let sibling = PathBuf::from(format!("{}-other", home.display()));
+        assert_eq!(label(sibling.clone()), sibling.display().to_string());
+        assert_eq!(label(outside.to_path_buf()), outside.display().to_string());
+
+        let mut terminal = TerminalState::new(TerminalId::alloc(), outside.to_path_buf());
+        terminal.set_launch_cwd(home.join("api"));
+        assert_eq!(
+            terminal.border_label(true, false),
+            Some(BorderLabel::Path(
+                Path::new("~").join("api").display().to_string()
+            ))
+        );
+
+        // A restored pane gets back the start directory its shell has left.
+        terminal.set_start_cwd(home.join("web"));
+        assert_eq!(terminal.cwd, home.join("api"));
+        assert_eq!(terminal.start_cwd(), home.join("web"));
+        assert_eq!(
+            terminal.border_label(true, false),
+            Some(BorderLabel::Path(
+                Path::new("~").join("web").display().to_string()
+            ))
+        );
     }
 
     #[test]

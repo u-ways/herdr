@@ -248,6 +248,8 @@ pub(super) struct ShellRenderState<'a> {
     pub(super) reveal_navigation_workspace: &'a mut bool,
     pub(super) dragged_workspace_id: Option<&'a str>,
     pub(super) workspace_drop_indicator_row: Option<u16>,
+    /// Base for workspace background tints.
+    pub(super) host_background: Option<crate::terminal_theme::RgbColor>,
 }
 
 pub(super) fn render_shell(
@@ -296,6 +298,7 @@ pub(super) fn render_shell(
                 state
                     .selected_workspace_id
                     .map(|target| target.workspace_id.as_str()),
+                state.host_background,
                 &mut hits,
             );
         } else {

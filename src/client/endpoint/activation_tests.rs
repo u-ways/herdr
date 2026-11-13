@@ -149,6 +149,8 @@ fn workspace_focus_success(id: &str, workspace_id: &str) -> Vec<u8> {
                 tokens: Default::default(),
                 worktree: None,
                 color: None,
+                background_tint: false,
+                custom_color: false,
             },
         },
     })

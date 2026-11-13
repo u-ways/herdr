@@ -830,13 +830,18 @@ pub struct AppState {
     pub sidebar_spaces: crate::config::SpacesSidebarConfig,
     pub next_agent_state_change_seq: u64,
     pub confirm_close: bool,
-    /// Give newly created workspaces the least-used color swatch.
-    pub auto_workspace_colors: bool,
+    /// Give newly created workspaces that no rule colors the least-used swatch.
+    pub workspace_auto_colors: bool,
+    /// Tint colored workspaces that neither the user nor their rule decided on.
+    pub workspace_background_tint: bool,
+    /// `[ui.workspace_colors]` path rules: live defaults under explicit picks.
+    pub workspace_color_rules: crate::workspace::color::WorkspaceColorRules,
     pub pane_borders: crate::config::PaneBordersConfig,
     pub pane_outer_borders: bool,
     pub pane_scrollbars: bool,
     pub pane_gaps: bool,
     pub show_agent_labels_on_pane_borders: bool,
+    pub show_cwd_on_pane_borders: bool,
     pub tab_bar_right: Vec<TabBarStatusSegment>,
     pub tab_bar_right_separator: String,
     /// Expose the focused pane's cursor anchor to the outer terminal even when
@@ -1074,12 +1079,15 @@ impl AppState {
             sidebar_spaces: crate::config::SpacesSidebarConfig::default(),
             next_agent_state_change_seq: 0,
             confirm_close: true,
-            auto_workspace_colors: false,
+            workspace_auto_colors: false,
+            workspace_background_tint: false,
+            workspace_color_rules: Default::default(),
             pane_borders: crate::config::PaneBordersConfig::Auto,
             pane_outer_borders: true,
             pane_scrollbars: true,
             pane_gaps: false,
             show_agent_labels_on_pane_borders: false,
+            show_cwd_on_pane_borders: false,
             tab_bar_right: Vec::new(),
             tab_bar_right_separator: " ".into(),
             reveal_hidden_cursor_for_cjk_ime: false,

@@ -175,9 +175,13 @@ impl App {
     }
 
     pub(crate) fn git_refresh_deadline(&self) -> Option<Instant> {
+        // Path color rules match the directory this refresh caches, so they
+        // need it even when no sidebar row shows Git metadata.
         (!self.git_refresh_in_flight
             && !self.state.workspaces.is_empty()
-            && (self.git_identity_refresh_requested || !self.git_refresh_demand().is_empty()))
+            && (self.git_identity_refresh_requested
+                || !self.git_refresh_demand().is_empty()
+                || !self.state.workspace_color_rules.is_empty()))
         .then_some(self.last_git_remote_status_refresh + GIT_REMOTE_STATUS_REFRESH_INTERVAL)
     }
 
@@ -597,6 +601,57 @@ mod tests {
 
         assert!(!app.git_refresh_in_flight);
         assert!(app.event_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn path_color_rules_follow_an_unreported_cd_without_sidebar_git_tokens() {
+        let root =
+            std::env::temp_dir().join(format!("herdr-color-rule-refresh-{}", std::process::id()));
+        let (start, ruled) = (root.join("start"), root.join("ruled"));
+        std::fs::create_dir_all(&start).unwrap();
+        std::fs::create_dir_all(&ruled).unwrap();
+        let mut config = crate::config::Config::default();
+        config.ui.sidebar.spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
+        config.ui.workspace_colors.rules = vec![crate::config::WorkspaceColorRule {
+            path: ruled.display().to_string(),
+            color: "green".into(),
+            background: None,
+        }];
+        let mut app = test_app(&config);
+        let mut workspace = Workspace::test_new("test");
+        workspace.identity_cwd = start.clone();
+        workspace.cached_identity_cwd = start;
+        app.state.workspaces.push(workspace);
+        app.state.active = Some(0);
+        app.state.ensure_test_terminals();
+        // The shell moved without reporting it, as bash and zsh do without OSC 7.
+        for terminal in app.state.terminals.values_mut() {
+            terminal.cwd = ruled.clone();
+        }
+        let color = |app: &super::super::App| {
+            app.state
+                .effective_workspace_color(&app.state.workspaces[0])
+        };
+        assert_eq!(color(&app), None);
+
+        let now = Instant::now();
+        app.last_git_remote_status_refresh = now - GIT_REMOTE_STATUS_REFRESH_INTERVAL;
+        app.start_git_status_refresh_if_due(now);
+        assert!(app.git_refresh_in_flight);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while app.git_refresh_in_flight {
+                let event = app.event_rx.recv().await.expect("Git worker completion");
+                app.handle_internal_event(event);
+            }
+        })
+        .await
+        .expect("Git refresh completes");
+
+        assert_eq!(
+            color(&app),
+            crate::workspace::color::WorkspaceColor::parse("green")
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -36,9 +36,19 @@ pub struct WorkspaceRenameParams {
 pub struct WorkspaceSetColorParams {
     pub workspace_id: String,
     /// `#rrggbb`, `#rgb`, a swatch name (rose, orange, yellow, green, teal, sky,
-    /// violet, pink), or `random` for the least-used swatch. Absent or null clears.
+    /// violet, pink), or `random` for the least-used swatch. Absent or null clears
+    /// the pick, so a matching `[ui.workspace_colors]` rule applies again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WorkspaceSetBackgroundTintParams {
+    pub workspace_id: String,
+    /// Tint the background of the colored workspace. Absent or null follows the
+    /// matching `[ui.workspace_colors]` rule, then `ui.workspace_colors.background`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -82,9 +92,16 @@ pub struct WorkspaceInfo {
     pub tokens: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree: Option<WorkspaceWorktreeInfo>,
-    /// Lowercase `#rrggbb` accent color, when one is set.
+    /// Lowercase `#rrggbb` accent color: the workspace's own pick, else the most
+    /// specific matching `[ui.workspace_colors]` rule's color.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// Clients tint the workspace's background with `color`.
+    #[serde(default, skip_serializing_if = "super::is_false")]
+    pub background_tint: bool,
+    /// `color` is the workspace's own pick rather than a path rule's.
+    #[serde(default, skip_serializing_if = "super::is_false")]
+    pub custom_color: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -385,10 +385,12 @@ fn workspace_color_menu_chains_from_the_workspace_menu_and_sets_colors() {
     let sky = WorkspaceColor::parse("sky");
     let mut projected = snapshot();
     projected.workspaces[0].color = sky.map(WorkspaceColor::to_hex);
+    projected.workspaces[0].custom_color = true;
     projected.workspaces.push(ClientShellWorkspace {
         workspace_id: "ws_2".into(),
         number: 2,
         color: None,
+        custom_color: false,
         focused: false,
         ..projected.workspaces[0].clone()
     });
@@ -438,7 +440,7 @@ fn workspace_color_menu_chains_from_the_workspace_menu_and_sets_colors() {
     };
     assert!(matches!(
         &menu.target,
-        ClientContextMenuTarget::WorkspaceColor { workspace_id, current }
+        ClientContextMenuTarget::WorkspaceColor { workspace_id, current, .. }
             if workspace_id == "ws_1" && *current == sky
     ));
     assert_eq!(menu.highlighted, 5, "the current swatch starts highlighted");
@@ -447,7 +449,19 @@ fn workspace_color_menu_chains_from_the_workspace_menu_and_sets_colors() {
             .iter()
             .map(|item| item.label)
             .collect::<Vec<_>>(),
-        ["rose", "orange", "yellow", "green", "teal", "sky", "violet", "pink", "Random", "Clear"]
+        [
+            "rose",
+            "orange",
+            "yellow",
+            "green",
+            "teal",
+            "sky",
+            "violet",
+            "pink",
+            "Tint background",
+            "Random",
+            "Clear"
+        ]
     );
     let frame = state.compose(106, 20).expect("color menu");
     let buffer = frame.to_ratatui_buffer().expect("color menu buffer");
@@ -478,7 +492,8 @@ fn workspace_color_menu_chains_from_the_workspace_menu_and_sets_colors() {
             (Color::Rgb(0, 0, 0), Color::Rgb(0x71, 0xc9, 0xfa))
         );
     }
-    assert_eq!(row_text(rows[8].0).trim_end(), "Random");
+    assert_eq!(row_text(rows[8].0).trim_end(), "Tint background");
+    assert_eq!(row_text(rows[9].0).trim_end(), "Random");
 
     let outcome = click(&mut state, MouseButton::Left, teal_row);
     assert!(state.overlay.is_none());
@@ -491,7 +506,7 @@ fn workspace_color_menu_chains_from_the_workspace_menu_and_sets_colors() {
             if params.workspace_id == "ws_1" && params.color.as_deref() == Some("#59d4cd")
     ));
 
-    for (index, expected) in [(8, Some("random")), (9, None)] {
+    for (index, expected) in [(9, Some("random")), (10, None)] {
         open_color_menu(&mut state, 0);
         let mut outcome = ClientShellInput::default();
         state.activate_context_menu_item(index, &mut outcome);
@@ -512,9 +527,88 @@ fn workspace_color_menu_chains_from_the_workspace_menu_and_sets_colors() {
     assert_eq!(
         items.len(),
         9,
-        "Clear is only offered for a colored workspace"
+        "Tint and Clear are only offered for a colored workspace"
     );
     assert_eq!(items[8].action, ClientContextMenuAction::RandomColor);
+}
+
+#[test]
+fn workspace_color_menu_toggles_the_tint_and_clears_only_the_users_pick() {
+    use crate::api::schema::Method;
+
+    // A path rule colors the workspace: the user has not picked a color.
+    let mut projected = snapshot();
+    projected.workspaces[0].color = Some("#90d192".into());
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    let open_color_menu = |state: &mut ClientShellState, projected: &ClientShellSnapshot| {
+        state.set_snapshot(Box::new(projected.clone()));
+        state.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
+            target: ClientContextMenuTarget::Workspace {
+                workspace_id: "ws_1".into(),
+                is_git: false,
+                is_linked_worktree: false,
+                has_worktree_children: false,
+                close_group: false,
+                collapsed: false,
+            },
+            x: 1,
+            y: 1,
+            highlighted: 0,
+        }));
+        state.activate_context_menu_item(2, &mut ClientShellInput::default());
+        let Some(ClientShellOverlay::ContextMenu(menu)) = state.overlay.as_ref() else {
+            panic!("color menu");
+        };
+        menu.items()
+            .iter()
+            .map(|item| (item.label, item.action))
+            .skip(8)
+            .collect::<Vec<_>>()
+    };
+    let activate = |state: &mut ClientShellState, index| {
+        let mut outcome = ClientShellInput::default();
+        state.activate_context_menu_item(index, &mut outcome);
+        let [ClientShellAction::Endpoint { request, .. }] = &outcome.actions[..] else {
+            panic!("the toggle should use the endpoint API");
+        };
+        request.method.clone()
+    };
+
+    assert_eq!(
+        open_color_menu(&mut state, &projected),
+        [
+            (
+                "Tint background",
+                ClientContextMenuAction::ToggleBackgroundTint
+            ),
+            ("Random", ClientContextMenuAction::RandomColor),
+        ],
+        "a rule's color comes back after Clear, so Clear is not offered"
+    );
+    assert!(matches!(
+        activate(&mut state, 8),
+        Method::WorkspaceSetBackgroundTint(params)
+            if params.workspace_id == "ws_1" && params.enabled == Some(true)
+    ));
+
+    projected.workspaces[0].background_tint = true;
+    projected.workspaces[0].custom_color = true;
+    assert_eq!(
+        open_color_menu(&mut state, &projected),
+        [
+            (
+                "Tint background ✓",
+                ClientContextMenuAction::ToggleBackgroundTint
+            ),
+            ("Random", ClientContextMenuAction::RandomColor),
+            ("Clear", ClientContextMenuAction::ClearColor),
+        ]
+    );
+    assert!(matches!(
+        activate(&mut state, 8),
+        Method::WorkspaceSetBackgroundTint(params)
+            if params.workspace_id == "ws_1" && params.enabled == Some(false)
+    ));
 }
 
 #[test]
@@ -577,6 +671,156 @@ fn focused_workspace_color_tints_the_active_tab_and_sidebar_separator() {
     assert_eq!(buffer[(divider.x, divider.y)].fg, palette.surface_dim);
     let workspace = state.hits.workspaces[0].rect;
     assert_eq!(buffer[(workspace.x, workspace.y)].symbol(), " ");
+}
+
+#[test]
+fn workspace_background_tint_fills_default_backgrounds_inside_the_pane_surface_only() {
+    use crate::terminal_theme::RgbColor;
+    use ratatui::style::Color;
+
+    let teal = WorkspaceColor::parse("teal").expect("teal swatch");
+    let host = RgbColor {
+        r: 30,
+        g: 30,
+        b: 46,
+    };
+    let app_background = Color::Indexed(4);
+    let compose = |background_tint, host_background, palette| {
+        let mut projected = snapshot();
+        projected.workspaces[0].color = Some(teal.to_hex());
+        projected.workspaces[0].background_tint = background_tint;
+        let mut pane_surface = surface();
+        // An application paints its own background in the first cell.
+        pane_surface.frame.cells[0].bg = crate::protocol::color_to_u32(app_background);
+        let mut config = ClientShellConfig::from_config(&Config::default());
+        config.palette = palette;
+        let mut state = ClientShellState::new(config);
+        state.set_snapshot(Box::new(projected));
+        state.set_pane_surface(pane_surface);
+        state.host_background = host_background;
+        let frame = state.compose(80, 20).expect("composed frame");
+        let buffer = frame.to_ratatui_buffer().expect("composed buffer");
+        (state, buffer)
+    };
+    let pane_backgrounds = |state: &ClientShellState, buffer: &Buffer| {
+        let area = state.layout(80, 20).pane_surface;
+        (area.top()..area.bottom())
+            .flat_map(|y| (area.left()..area.right()).map(move |x| buffer[(x, y)].bg))
+            .collect::<Vec<_>>()
+    };
+
+    let (state, buffer) = compose(true, Some(host), Palette::catppuccin());
+    let tint = teal
+        .tint(Some(host), &state.config.palette)
+        .expect("host tint");
+    let layout = state.layout(80, 20);
+    let backgrounds = pane_backgrounds(&state, &buffer);
+    assert_eq!(backgrounds[0], app_background, "explicit backgrounds stay");
+    assert!(backgrounds[1..].iter().all(|&bg| bg == tint));
+    assert_eq!(
+        buffer[(layout.pane_surface.x + 1, layout.pane_surface.y)].symbol(),
+        "I"
+    );
+    // The tab bar, the separator and the sidebar outside the workspace row are not tinted.
+    assert_eq!(layout.tab_bar.height, 1);
+    assert!((layout.tab_bar.left()..layout.tab_bar.right())
+        .all(|x| buffer[(x, layout.tab_bar.y)].bg != tint));
+    let divider = state.hits.sidebar_divider;
+    assert!(divider.height > 0);
+    assert!((divider.top()..divider.bottom()).all(|y| buffer[(divider.x, y)].bg != tint));
+    assert_ne!(buffer[(layout.sidebar.x, layout.sidebar.y)].bg, tint);
+
+    // Off, the pane surface keeps the terminal's default background.
+    let (state, buffer) = compose(false, Some(host), Palette::catppuccin());
+    assert!(pane_backgrounds(&state, &buffer)[1..]
+        .iter()
+        .all(|&bg| bg == Color::Reset));
+
+    // Without a host report the RGB panel background is the base; the terminal theme has none.
+    let (state, buffer) = compose(true, None, Palette::catppuccin());
+    let panel_tint = teal.tint(None, &state.config.palette).expect("panel tint");
+    assert_ne!(panel_tint, tint);
+    assert_eq!(pane_backgrounds(&state, &buffer)[1], panel_tint);
+    let (state, buffer) = compose(true, None, Palette::terminal());
+    assert!(pane_backgrounds(&state, &buffer)[1..]
+        .iter()
+        .all(|&bg| bg == Color::Reset));
+}
+
+#[test]
+fn workspace_background_tint_reaches_rows_patched_without_composing() {
+    use crate::protocol::{color_to_u32, CellData, PaneSurfacePatch, PaneSurfacePatchRow};
+    use ratatui::style::Color;
+
+    let teal = WorkspaceColor::parse("teal").expect("teal swatch");
+    let app_background = color_to_u32(Color::Indexed(4));
+    let cell = |symbol: &str, bg| CellData {
+        symbol: symbol.into(),
+        fg: 0,
+        bg,
+        modifier: 0,
+        skip: false,
+        hyperlink: None,
+    };
+    for background_tint in [false, true] {
+        let mut projected = snapshot();
+        projected.workspaces[0].color = Some(teal.to_hex());
+        projected.workspaces[0].background_tint = background_tint;
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+        state.set_snapshot(Box::new(projected));
+        let pane_surface = surface();
+        let mut updated_pane = pane_surface.panes[0].clone();
+        updated_pane.content_revision = 2;
+        state.set_pane_surface(pane_surface);
+        state.host_background = Some(crate::terminal_theme::RgbColor {
+            r: 30,
+            g: 30,
+            b: 46,
+        });
+        let composed = state.compose(100, 30).expect("initial composed frame");
+        let patch = PaneSurfacePatch {
+            boot_id: "boot-1".into(),
+            projection_revision: 1,
+            base_surface_revision: 1,
+            surface_revision: 2,
+            rows: vec![PaneSurfacePatchRow {
+                x: 0,
+                y: 0,
+                cells: vec![
+                    cell("N", 0),
+                    cell("E", app_background),
+                    cell("W", 0),
+                    cell("S", 0),
+                ],
+            }],
+            panes: vec![updated_pane],
+            cursor: None,
+        };
+
+        let ClientPaneSurfacePatchOutcome::Applied(Some(patch)) =
+            state.apply_pane_surface_patch(patch)
+        else {
+            panic!("expected fast retained patch");
+        };
+        let patched = apply_composed_surface_patch(&composed, patch).expect("apply patch");
+        let area = state.layout(100, 30).pane_surface;
+        let start = usize::from(area.y) * 100 + usize::from(area.x);
+        let tint = teal
+            .tint(state.host_background, &state.config.palette)
+            .filter(|_| background_tint)
+            .map_or(0, color_to_u32);
+        assert_eq!(
+            patched.cells[start..start + 4]
+                .iter()
+                .map(|cell| cell.bg)
+                .collect::<Vec<_>>(),
+            [tint, app_background, tint, tint],
+            "{background_tint}"
+        );
+        // Forwarded rows match what composing the patched surface draws, so nothing flashes.
+        let recomposed = state.compose(100, 30).expect("recomposed frame");
+        assert_eq!(patched.cells, recomposed.cells, "{background_tint}");
+    }
 }
 
 #[test]

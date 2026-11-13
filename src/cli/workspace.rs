@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::api::schema::{
     Method, WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceReportMetadataParams,
-    WorkspaceSetColorParams,
+    WorkspaceSetBackgroundTintParams, WorkspaceSetColorParams,
 };
 
 pub(super) fn run_workspace_command(args: &[String]) -> std::io::Result<i32> {
@@ -18,6 +18,7 @@ pub(super) fn run_workspace_command(args: &[String]) -> std::io::Result<i32> {
         "focus" => workspace_focus(&args[1..]),
         "rename" => workspace_rename(&args[1..]),
         "color" => workspace_color(&args[1..]),
+        "background" => workspace_background(&args[1..]),
         "report-metadata" => workspace_report_metadata(&args[1..]),
         "close" => workspace_close(&args[1..]),
         "help" | "--help" | "-h" => {
@@ -157,6 +158,28 @@ fn workspace_color(args: &[String]) -> std::io::Result<i32> {
     })
 }
 
+fn workspace_background(args: &[String]) -> std::io::Result<i32> {
+    let usage = "usage: herdr workspace background <workspace_id> <on|off|default>";
+    let [raw_workspace_id, tint] = args else {
+        eprintln!("{usage}");
+        return Ok(2);
+    };
+    let enabled = match tint.as_str() {
+        "on" => Some(true),
+        "off" => Some(false),
+        "default" => None,
+        _ => {
+            eprintln!("{usage}");
+            return Ok(2);
+        }
+    };
+
+    super::runtime::workspace_set_background_tint(WorkspaceSetBackgroundTintParams {
+        workspace_id: super::normalize_workspace_id(raw_workspace_id),
+        enabled,
+    })
+}
+
 fn workspace_report_metadata(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_workspace_id) = args.first() else {
         eprintln!("usage: herdr workspace report-metadata <workspace_id> --source ID [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
@@ -266,6 +289,7 @@ fn print_workspace_help() {
     eprintln!("  herdr workspace focus <workspace_id>");
     eprintln!("  herdr workspace rename <workspace_id> <label>");
     eprintln!("  herdr workspace color <workspace_id> <#rrggbb|#rgb|NAME|random|none>");
+    eprintln!("  herdr workspace background <workspace_id> <on|off|default>");
     eprintln!("  herdr workspace report-metadata <workspace_id> --source ID [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
     eprintln!("  herdr workspace close <workspace_id> [--group]");
 }

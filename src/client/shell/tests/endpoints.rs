@@ -938,6 +938,77 @@ fn machine_sidebar_marks_each_endpoint_workspace_with_its_color() {
 }
 
 #[test]
+fn machine_sidebar_tints_the_rows_of_tinted_workspaces_on_online_machines() {
+    let host = crate::terminal_theme::RgbColor {
+        r: 30,
+        g: 30,
+        b: 46,
+    };
+    let teal = WorkspaceColor::parse("teal").expect("teal swatch");
+    let rose = WorkspaceColor::parse("rose").expect("rose swatch");
+    let (mut state, remote_id) = state_with_remote();
+    state.host_background = Some(host);
+    let mut local = state.snapshot.as_deref().expect("local snapshot").clone();
+    local.workspaces[0].color = Some(teal.to_hex());
+    local.workspaces[0].background_tint = true;
+    state.set_snapshot(Box::new(local));
+    let mut remote = snapshot();
+    remote.boot_id = "remote-boot".into();
+    remote.workspaces[0].color = Some(rose.to_hex());
+    remote.workspaces[0].background_tint = true;
+    state.set_endpoint_snapshot(&remote_id, Box::new(remote));
+    let palette = state.config.palette.clone();
+    let tints = [
+        (true, teal.tint(Some(host), &palette)),
+        (false, rose.tint(Some(host), &palette)),
+    ];
+    let row_backgrounds = |state: &mut ClientShellState, collapsed: bool, local: bool| {
+        state.sidebar_collapsed = collapsed;
+        let frame = state.compose(100, 28).expect("machines sidebar");
+        let buffer = frame.to_ratatui_buffer().expect("machines buffer");
+        let rect = state
+            .hits
+            .workspaces
+            .iter()
+            .find(|hit| hit.endpoint_id.is_local() == local)
+            .expect("machine workspace row")
+            .rect;
+        // Expanded machine rows nest workspaces two columns in.
+        let left = rect.x + if collapsed { 0 } else { 2 };
+        let mut backgrounds = Vec::new();
+        for y in rect.top()..rect.bottom() {
+            for x in left..rect.right() {
+                backgrounds.push(buffer[(x, y)].bg);
+            }
+        }
+        backgrounds
+    };
+
+    for collapsed in [false, true] {
+        for (local, tint) in tints {
+            assert!(tint.is_some());
+            assert!(
+                row_backgrounds(&mut state, collapsed, local)
+                    .iter()
+                    .all(|&bg| Some(bg) == tint),
+                "collapsed {collapsed}, local {local}"
+            );
+        }
+    }
+
+    // Offline machines drop the tint, as they grey the marker.
+    state.set_endpoint_status(&remote_id, ClientEndpointStatus::Reconnecting);
+    for collapsed in [false, true] {
+        assert!(
+            row_backgrounds(&mut state, collapsed, false)
+                .iter()
+                .all(|&bg| Some(bg) != tints[1].1),
+            "collapsed {collapsed}"
+        );
+    }
+}
+
+#[test]
 fn saved_machine_preserves_endpoint_scoped_worktree_collapses() {
     fn add_worktree_group(snapshot: &mut ClientShellSnapshot, parent_id: &str, child_id: &str) {
         snapshot.workspaces[0].workspace_id = parent_id.into();

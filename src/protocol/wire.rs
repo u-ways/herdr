@@ -1028,6 +1028,12 @@ pub struct ClientShellWorkspace {
     /// Lowercase `#rrggbb` accent color. Clients parse it leniently and ignore invalid values.
     #[serde(default)]
     pub color: Option<String>,
+    /// Tint the workspace's background with `color`.
+    #[serde(default)]
+    pub background_tint: bool,
+    /// `color` is the workspace's own pick rather than a path rule's.
+    #[serde(default)]
+    pub custom_color: bool,
     pub branch: Option<String>,
     pub git_ahead_behind: Option<(usize, usize)>,
     pub tokens: Vec<(String, String)>,
@@ -2828,6 +2834,8 @@ mod tests {
                 label: "shell".into(),
                 custom_label: false,
                 color: Some("#59d4cd".into()),
+                background_tint: true,
+                custom_color: true,
                 branch: Some("main".into()),
                 git_ahead_behind: None,
                 tokens: Vec::new(),

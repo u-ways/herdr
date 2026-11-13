@@ -249,13 +249,37 @@ fn workspace_accent(workspace: &ClientShellWorkspace) -> Option<WorkspaceColor> 
     workspace.color.as_deref().and_then(WorkspaceColor::parse)
 }
 
-fn focused_workspace_accent(snapshot: &ClientShellSnapshot) -> Option<WorkspaceColor> {
+/// The workspace's background tint, when it has one on and a background to mix from is known.
+fn workspace_tint(
+    workspace: &ClientShellWorkspace,
+    host_background: Option<crate::terminal_theme::RgbColor>,
+    palette: &Palette,
+) -> Option<ratatui::style::Color> {
+    if !workspace.background_tint {
+        return None;
+    }
+    workspace_accent(workspace)?.tint(host_background, palette)
+}
+
+fn focused_workspace(snapshot: &ClientShellSnapshot) -> Option<&ClientShellWorkspace> {
     let focused = snapshot.focused_workspace_id.as_deref()?;
     snapshot
         .workspaces
         .iter()
         .find(|workspace| workspace.workspace_id == focused)
-        .and_then(workspace_accent)
+}
+
+fn focused_workspace_accent(snapshot: &ClientShellSnapshot) -> Option<WorkspaceColor> {
+    focused_workspace(snapshot).and_then(workspace_accent)
+}
+
+fn focused_workspace_tint(
+    snapshot: &ClientShellSnapshot,
+    host_background: Option<crate::terminal_theme::RgbColor>,
+    palette: &Palette,
+) -> Option<ratatui::style::Color> {
+    focused_workspace(snapshot)
+        .and_then(|workspace| workspace_tint(workspace, host_background, palette))
 }
 
 /// Draws a `▌` accent bar down the first column of a sidebar row, keeping its background.
@@ -272,6 +296,30 @@ fn paint_accent_marker(
     for y in area.y..area.bottom() {
         if let Some(cell) = buffer.cell_mut((area.x, y)) {
             cell.set_symbol("▌").set_fg(fg);
+        }
+    }
+}
+
+/// Tints the default-background cells of the pane surface blitted at `area`.
+fn tint_pane_surface(frame: &mut FrameData, area: Rect, tint: ratatui::style::Color) {
+    let width = usize::from(frame.width);
+    let right = usize::from(area.right().min(frame.width));
+    for y in area.top()..area.bottom() {
+        let row = usize::from(y) * width;
+        if let Some(cells) = frame.cells.get_mut(row + usize::from(area.x)..row + right) {
+            tint_default_background(cells, tint);
+        }
+    }
+}
+
+/// Gives cells on the terminal's default background `tint` instead. Cells
+/// with a background of their own, such as application UI, keep it.
+fn tint_default_background(cells: &mut [crate::protocol::CellData], tint: ratatui::style::Color) {
+    let default = crate::protocol::color_to_u32(ratatui::style::Color::Reset);
+    let tint = crate::protocol::color_to_u32(tint);
+    for cell in cells {
+        if cell.bg == default {
+            cell.bg = tint;
         }
     }
 }

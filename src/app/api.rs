@@ -1073,6 +1073,9 @@ impl App {
             Method::WorkspaceSetColor(params) => {
                 return self.handle_workspace_set_color(request.id, params);
             }
+            Method::WorkspaceSetBackgroundTint(params) => {
+                return self.handle_workspace_set_background_tint(request.id, params);
+            }
             Method::WorkspaceMove(params) => {
                 return self.handle_workspace_move(request.id, params);
             }

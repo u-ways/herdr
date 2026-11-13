@@ -122,6 +122,66 @@ fn workspace_set_color_without_color_clears_and_round_trips() {
 }
 
 #[test]
+fn workspace_set_background_tint_without_enabled_follows_default_and_round_trips() {
+    for params in [
+        serde_json::json!({ "workspace_id": "w1" }),
+        serde_json::json!({ "workspace_id": "w1", "enabled": null }),
+    ] {
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "id": "tint",
+            "method": "workspace.set_background_tint",
+            "params": params,
+        }))
+        .unwrap();
+        assert!(matches!(
+            request.method,
+            Method::WorkspaceSetBackgroundTint(WorkspaceSetBackgroundTintParams {
+                enabled: None,
+                ..
+            })
+        ));
+    }
+
+    for enabled in [true, false] {
+        let request = Request {
+            id: "tint".into(),
+            method: Method::WorkspaceSetBackgroundTint(WorkspaceSetBackgroundTintParams {
+                workspace_id: "w1".into(),
+                enabled: Some(enabled),
+            }),
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["method"], "workspace.set_background_tint");
+        assert_eq!(json["params"]["enabled"], enabled);
+        assert_eq!(serde_json::from_value::<Request>(json).unwrap(), request);
+    }
+}
+
+#[test]
+fn workspace_info_omits_false_color_flags_and_reads_them_when_absent() {
+    let json = serde_json::json!({
+        "workspace_id": "w1",
+        "number": 1,
+        "label": "api",
+        "focused": false,
+        "pane_count": 1,
+        "tab_count": 1,
+        "active_tab_id": "w1:1",
+        "agent_status": "unknown",
+        "color": "#90d192",
+    });
+    let mut info: WorkspaceInfo = serde_json::from_value(json.clone()).unwrap();
+    assert!(!info.background_tint && !info.custom_color);
+    assert_eq!(serde_json::to_value(&info).unwrap(), json);
+
+    info.background_tint = true;
+    info.custom_color = true;
+    let encoded = serde_json::to_value(&info).unwrap();
+    assert_eq!(encoded["background_tint"], true);
+    assert_eq!(encoded["custom_color"], true);
+}
+
+#[test]
 fn agent_start_and_prompt_requests_round_trip() {
     let start = Request {
         id: "start".into(),
@@ -840,6 +900,8 @@ fn worktree_request_and_response_round_trip() {
                     is_linked_worktree: true,
                 }),
                 color: None,
+                background_tint: false,
+                custom_color: false,
             },
             tab: TabInfo {
                 tab_id: "w_1:1".into(),
@@ -928,6 +990,8 @@ fn worktree_lifecycle_events_round_trip() {
             is_linked_worktree: true,
         }),
         color: None,
+        background_tint: false,
+        custom_color: false,
     };
     let worktree = WorktreeInfo {
         path: "/worktrees/herdr/worktree-api".into(),

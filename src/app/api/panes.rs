@@ -980,6 +980,8 @@ impl App {
             previous_workspace_id: previous_workspace_id.clone(),
             previous_workspace_label: self.state.workspaces[source_ws_idx].custom_name.clone(),
             previous_workspace_color: self.state.workspaces[source_ws_idx].color,
+            previous_workspace_background_tint: self.state.workspaces[source_ws_idx]
+                .background_tint,
             previous_tab_label: self.state.workspaces[source_ws_idx].tabs[source_tab_idx]
                 .custom_name
                 .clone(),
@@ -1393,6 +1395,7 @@ impl App {
             );
             workspace.id = context.previous_workspace_id;
             workspace.color = context.previous_workspace_color;
+            workspace.background_tint = context.previous_workspace_background_tint;
             workspace.worktree_space = context.previous_worktree_space;
             let insert_idx = context.source_ws_idx.min(self.state.workspaces.len());
             if let Some(active) = self.state.active {
@@ -2246,6 +2249,7 @@ struct PaneMoveRecoveryContext {
     previous_workspace_id: String,
     previous_workspace_label: Option<String>,
     previous_workspace_color: Option<crate::workspace::color::WorkspaceColor>,
+    previous_workspace_background_tint: Option<bool>,
     previous_tab_label: Option<String>,
     previous_worktree_space: Option<crate::workspace::WorktreeSpaceMembership>,
     identity_cwd: std::path::PathBuf,
@@ -3622,7 +3626,7 @@ mod tests {
             .unwrap()
             .clone();
         seed_terminal_states(&mut app);
-        app.state.auto_workspace_colors = true;
+        app.state.workspace_auto_colors = true;
         let source_public = app.public_pane_id(0, source).unwrap();
         let source_workspace = app.public_workspace_id(0);
 
@@ -3839,11 +3843,13 @@ mod tests {
             .clone();
         let previous_workspace_id = app.public_workspace_id(0);
         app.state.workspaces[0].color = crate::workspace::color::WorkspaceColor::parse("sky");
+        app.state.workspaces[0].background_tint = Some(true);
         let context = PaneMoveRecoveryContext {
             source_ws_idx: 0,
             previous_workspace_id: previous_workspace_id.clone(),
             previous_workspace_label: app.state.workspaces[0].custom_name.clone(),
             previous_workspace_color: app.state.workspaces[0].color,
+            previous_workspace_background_tint: app.state.workspaces[0].background_tint,
             previous_tab_label: app.state.workspaces[0].tabs[0].custom_name.clone(),
             previous_worktree_space: app.state.workspaces[0].worktree_space.clone(),
             identity_cwd: app.state.workspaces[0].identity_cwd.clone(),
@@ -3863,6 +3869,7 @@ mod tests {
             app.state.workspaces[0].color,
             crate::workspace::color::WorkspaceColor::parse("sky")
         );
+        assert_eq!(app.state.workspaces[0].background_tint, Some(true));
         assert_eq!(
             app.state.workspaces[0].tabs[0].terminal_id(source),
             Some(&source_terminal)

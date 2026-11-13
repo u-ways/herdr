@@ -86,6 +86,35 @@ fn workspace_and_pane_management_commands_work() {
     );
     let colored_json: serde_json::Value = serde_json::from_slice(&colored.stdout).unwrap();
     assert_eq!(colored_json["result"]["workspace"]["color"], "#59d4cd");
+    assert_eq!(colored_json["result"]["workspace"]["custom_color"], true);
+
+    let tinted = run_cli(
+        &socket_path,
+        &["workspace", "background", &workspace_id, "on"],
+    );
+    assert!(
+        tinted.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&tinted.stderr)
+    );
+    let tinted_json: serde_json::Value = serde_json::from_slice(&tinted.stdout).unwrap();
+    assert_eq!(tinted_json["result"]["workspace"]["background_tint"], true);
+
+    let untinted = run_cli(
+        &socket_path,
+        &["workspace", "background", &workspace_id, "default"],
+    );
+    assert!(untinted.status.success());
+    let untinted_json: serde_json::Value = serde_json::from_slice(&untinted.stdout).unwrap();
+    assert!(untinted_json["result"]["workspace"]
+        .get("background_tint")
+        .is_none());
+
+    let invalid_tint = run_cli(
+        &socket_path,
+        &["workspace", "background", &workspace_id, "maybe"],
+    );
+    assert_eq!(invalid_tint.status.code(), Some(2));
 
     let invalid_color = run_cli(&socket_path, &["workspace", "color", &workspace_id, "cyan"]);
     assert!(!invalid_color.status.success());

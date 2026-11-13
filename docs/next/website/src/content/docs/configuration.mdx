@@ -313,7 +313,28 @@ The sidebar is the main Herdr dashboard. Search `ui.` in the [Config reference](
 
 `ui.pane_borders` accepts `"auto"` (the default, borders only for split panes), `"always"` (also frame a single pane), or `"off"`. A single-pane frame requires `ui.pane_outer_borders = true`, because all its edges are outer edges. Existing boolean values remain valid: `true` means `"auto"` and `false` means `"off"`.
 
-Each workspace can have an accent color, shown on its sidebar rows, its agents' rows, the active tab, the sidebar separator, and the focused pane border when one is drawn. Right-click a workspace and choose **Color...** to pick a swatch, a random one, or clear it, or run `herdr workspace color`. Set `ui.auto_workspace_colors = true` to give every newly created workspace the swatch the other workspaces use least. Restored and existing workspaces keep their current color.
+`ui.show_cwd_on_pane_borders = true` titles each pane border with the directory the pane started in, such as `~/projects/api`, in place of its agent label. It does not follow later `cd`s. A title the pane reports or a name you gave it still wins, and a narrow border keeps the end of the path.
+
+Each workspace can have an accent color, shown on its sidebar rows, its agents' rows, the active tab, the sidebar separator, and the focused pane border when one is drawn. Right-click a workspace and choose **Color...** to pick a swatch, a random one, or clear your pick, or run `herdr workspace color`. **Tint background** in that menu, or `herdr workspace background`, also shades a colored workspace's pane area and its own sidebar row with a light tint of its color; the tint is off by default.
+
+`[ui.workspace_colors]` sets defaults for colors you have not picked. `auto = true` gives every newly created workspace that no rule colors the swatch the other workspaces use least; restored and existing workspaces keep their colors. `background = true` turns the tint on for every colored workspace that has no tint choice of its own. Each `[[ui.workspace_colors.rules]]` entry colors the workspaces whose directory is inside `path`, an absolute path or one starting with `~`:
+
+```toml
+[ui.workspace_colors]
+auto = false
+background = false
+
+[[ui.workspace_colors.rules]]
+path = "~/github/mns"
+color = "green"
+
+[[ui.workspace_colors.rules]]
+path = "~/github/mns/API-PLATFORM/ADEPT"
+color = "#f38ba8"
+background = true
+```
+
+A workspace shows the color you picked for it, else the color of the most specific rule matching its directory, else none. Its tint follows your choice, else the rule's optional `background`, else `ui.workspace_colors.background`, and only applies while the workspace has a color. `color` accepts `#rrggbb`, `#rgb`, or a swatch name (`rose`, `orange`, `yellow`, `green`, `teal`, `sky`, `violet`, `pink`). Herdr ignores a rule whose `path` or `color` string is invalid and reports it. Rules are live defaults: after `herdr server reload-config`, every workspace shows the updated rules, and clearing your pick shows the rule's color again. A workspace's directory is the one its automatic label comes from, the working directory of its first tab's root pane.
 
 Set `tab_bar_position = "bottom"` under `[ui]` to place the desktop tab row below the terminal panes. Prefix, Navigate, Copy, and Resize mode bars temporarily replace the bottom tab row while active. The default is `"top"`.
 

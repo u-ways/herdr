@@ -2,9 +2,9 @@ use crate::api::schema::{
     EmptyParams, Method, PaneFocusDirectionParams, PaneInputSetParams, PaneMoveParams,
     PaneRenameParams, PaneResizeParams, PaneSplitParams, PaneSwapParams, PaneTarget,
     PaneZoomParams, Request, TabCreateParams, TabListParams, TabRenameParams, TabTarget,
-    WorkspaceCloseParams, WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceSetColorParams,
-    WorkspaceTarget, WorktreeCreateParams, WorktreeListParams, WorktreeOpenParams,
-    WorktreeRemoveParams,
+    WorkspaceCloseParams, WorkspaceCreateParams, WorkspaceRenameParams,
+    WorkspaceSetBackgroundTintParams, WorkspaceSetColorParams, WorkspaceTarget,
+    WorktreeCreateParams, WorktreeListParams, WorktreeOpenParams, WorktreeRemoveParams,
 };
 
 fn print_method_response(id: &'static str, method: Method) -> std::io::Result<i32> {
@@ -45,6 +45,15 @@ pub(super) fn workspace_rename(params: WorkspaceRenameParams) -> std::io::Result
 
 pub(super) fn workspace_set_color(params: WorkspaceSetColorParams) -> std::io::Result<i32> {
     print_method_response("cli:workspace:color", Method::WorkspaceSetColor(params))
+}
+
+pub(super) fn workspace_set_background_tint(
+    params: WorkspaceSetBackgroundTintParams,
+) -> std::io::Result<i32> {
+    print_method_response(
+        "cli:workspace:background",
+        Method::WorkspaceSetBackgroundTint(params),
+    )
 }
 
 pub(super) fn workspace_close(params: WorkspaceCloseParams) -> std::io::Result<i32> {

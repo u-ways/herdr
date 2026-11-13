@@ -139,8 +139,14 @@ pub(super) fn render_collapsed(
             } else {
                 palette.selection_bg
             };
+            let stale = endpoint.status != ClientEndpointStatus::Online;
             if selected {
                 buffer.set_style(rect, Style::default().bg(selection_background));
+            } else if let Some(tint) =
+                workspace_tint(workspace, state.host_background, palette).filter(|_| !stale)
+            {
+                // Offline machines drop the tint, as they grey the marker.
+                buffer.set_style(rect, Style::default().bg(tint));
             } else if focused {
                 buffer.set_style(
                     rect,
@@ -150,7 +156,6 @@ pub(super) fn render_collapsed(
                     )),
                 );
             }
-            let stale = endpoint.status != ClientEndpointStatus::Online;
             let number = format!(" {}", workspace.number);
             let number_width = super::render::display_width(&number).min(rect.width);
             let dim = if stale {
@@ -489,6 +494,12 @@ pub(super) fn render_expanded(
                     false,
                     palette,
                 );
+                // The tint replaces the focused row background; offline machines drop it.
+                if let Some(tint) = workspace_tint(workspace, state.host_background, palette)
+                    .filter(|_| !selected && endpoint.status == ClientEndpointStatus::Online)
+                {
+                    buffer.set_style(nested, Style::default().bg(tint));
+                }
                 paint_accent_marker(buffer, nested, workspace_accent(workspace), palette);
                 if endpoint.status != ClientEndpointStatus::Online {
                     buffer.set_style(

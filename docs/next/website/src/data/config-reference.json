@@ -1000,6 +1000,12 @@
           "description": "Show agent labels in split pane borders when no manual pane label is set."
         },
         {
+          "key": "ui.show_cwd_on_pane_borders",
+          "type": "boolean",
+          "default": "false",
+          "description": "Show the directory each pane started in, with ~ for the home directory, in its border in place of the agent label when no manual pane label is set. A narrow border keeps the end of the path."
+        },
+        {
           "key": "ui.hide_tab_bar_when_single_tab",
           "type": "boolean",
           "default": "false",
@@ -1097,10 +1103,16 @@
           "description": "Accent color for highlights, borders, and navigation UI. Accepts hex (#89b4fa), named colors (cyan, blue), or RGB (rgb(137,180,250))."
         },
         {
-          "key": "ui.auto_workspace_colors",
+          "key": "ui.workspace_colors.auto",
           "type": "boolean",
           "default": "false",
-          "description": "Give each newly created workspace the color swatch the other workspaces use least. Restored and existing workspaces keep their current color."
+          "description": "Give each newly created workspace that no [[ui.workspace_colors.rules]] entry colors the swatch the other workspaces use least. Restored and existing workspaces keep their current color."
+        },
+        {
+          "key": "ui.workspace_colors.background",
+          "type": "boolean",
+          "default": "false",
+          "description": "Tint the pane area and sidebar row of colored workspaces with a light shade of their color, unless the workspace or its matching rule sets its own tint."
         }
       ]
     },

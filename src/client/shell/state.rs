@@ -515,6 +515,7 @@ pub(super) enum ClientContextMenuAction {
     Color,
     /// Index into [`crate::workspace::color::SWATCHES`].
     SetColor(u8),
+    ToggleBackgroundTint,
     RandomColor,
     ClearColor,
     NewWorktree,
@@ -544,7 +545,11 @@ pub(super) enum ClientContextMenuTarget {
     },
     WorkspaceColor {
         workspace_id: String,
+        /// The effective color: the user's pick or a path rule's.
         current: Option<WorkspaceColor>,
+        background_tint: bool,
+        /// `current` is the user's pick, which Clear removes.
+        custom_color: bool,
     },
     Tab {
         tab_id: String,

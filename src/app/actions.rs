@@ -571,7 +571,38 @@ impl AppState {
         true
     }
 
-    /// The swatch the workspaces use least, never `ws_idx`'s current color.
+    /// The color every client shows for `ws`: the user's pick, else the most
+    /// specific `[ui.workspace_colors]` rule containing its directory.
+    pub(crate) fn effective_workspace_color(
+        &self,
+        ws: &crate::workspace::Workspace,
+    ) -> Option<WorkspaceColor> {
+        ws.color
+            .or_else(|| self.workspace_color_rule(ws).map(|(color, _)| color))
+    }
+
+    /// Whether clients tint `ws`: the user's choice, else its rule's, else
+    /// `ui.workspace_colors.background`; never without an effective color.
+    pub(crate) fn effective_workspace_tint(&self, ws: &crate::workspace::Workspace) -> bool {
+        let rule = self.workspace_color_rule(ws);
+        (ws.color.is_some() || rule.is_some())
+            && ws
+                .background_tint
+                .or_else(|| rule.and_then(|(_, background)| background))
+                .unwrap_or(self.workspace_background_tint)
+    }
+
+    /// Rules match the directory the automatic label and Git metadata come
+    /// from. It is a cached field the Git refresh keeps current while rules
+    /// exist, so a lookup never queries a process.
+    fn workspace_color_rule(
+        &self,
+        ws: &crate::workspace::Workspace,
+    ) -> Option<(WorkspaceColor, Option<bool>)> {
+        self.workspace_color_rules.matching(&ws.cached_identity_cwd)
+    }
+
+    /// The swatch the workspaces show least, never `ws_idx`'s current color.
     pub(crate) fn least_used_workspace_color(
         &self,
         ws_idx: usize,
@@ -581,25 +612,27 @@ impl AppState {
         let used = self
             .workspaces
             .iter()
-            .filter_map(|workspace| workspace.color);
-        let current = self.workspaces.get(ws_idx).and_then(|ws| ws.color);
+            .filter_map(|workspace| self.effective_workspace_color(workspace));
+        let current = self
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| self.effective_workspace_color(ws));
         crate::workspace::color::least_used(used, current, seed)
     }
 
-    /// Colors a newly created workspace when `ui.auto_workspace_colors` is on.
-    /// Ties resolve in palette order so the assignment is deterministic.
+    /// Colors a newly created workspace that neither the user nor a path rule
+    /// colors, when `ui.workspace_colors.auto` is on. Ties resolve in palette
+    /// order so the assignment is deterministic.
     pub(crate) fn auto_assign_workspace_color(&mut self, ws_idx: usize) {
-        if !self.auto_workspace_colors {
+        let uncolored = self
+            .workspaces
+            .get(ws_idx)
+            .is_some_and(|ws| self.effective_workspace_color(ws).is_none());
+        if !self.workspace_auto_colors || !uncolored {
             return;
         }
         let color = self.least_used_workspace_color(ws_idx, None);
-        if let Some(workspace) = self
-            .workspaces
-            .get_mut(ws_idx)
-            .filter(|workspace| workspace.color.is_none())
-        {
-            workspace.color = Some(color);
-        }
+        self.workspaces[ws_idx].color = Some(color);
     }
 
     pub(crate) fn terminal_ids_for_workspace(
@@ -1396,6 +1429,11 @@ impl AppState {
 
             let ws = &mut self.workspaces[ws_idx];
             if ws.cached_identity_cwd != result.resolved_identity_cwd {
+                // Path rules match this directory, so crossing a rule recolors.
+                changed |= self.workspace_color_rules.matching(&ws.cached_identity_cwd)
+                    != self
+                        .workspace_color_rules
+                        .matching(&result.resolved_identity_cwd);
                 ws.cached_identity_cwd = result.resolved_identity_cwd;
             }
             if ws.cached_auto_label != result.auto_label {
@@ -2902,7 +2940,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_workspace_colors_assign_least_used_swatch_deterministically() {
+    fn workspace_auto_colors_assign_least_used_swatch_deterministically() {
         let color = |value| WorkspaceColor::parse(value);
         let mut state = app_with_workspaces(&["a", "b", "c", "d"]);
         state.workspaces[0].color = color("rose");
@@ -2911,7 +2949,7 @@ mod tests {
         state.auto_assign_workspace_color(2);
         assert_eq!(state.workspaces[2].color, None, "off by default");
 
-        state.auto_workspace_colors = true;
+        state.workspace_auto_colors = true;
         state.auto_assign_workspace_color(2);
         assert_eq!(state.workspaces[2].color, color("orange"));
         state.auto_assign_workspace_color(3);
@@ -2938,6 +2976,133 @@ mod tests {
             assert_ne!(Some(picked), state.workspaces[0].color);
             assert_ne!(Some(picked), state.workspaces[1].color);
         }
+    }
+
+    fn color_rules(
+        rules: &[(&std::path::Path, &str, Option<bool>)],
+    ) -> crate::workspace::color::WorkspaceColorRules {
+        let rules: Vec<_> = rules
+            .iter()
+            .map(
+                |&(path, color, background)| crate::config::WorkspaceColorRule {
+                    path: path.display().to_string(),
+                    color: color.into(),
+                    background,
+                },
+            )
+            .collect();
+        let (rules, diagnostics) = crate::workspace::color::WorkspaceColorRules::resolve(&rules);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        rules
+    }
+
+    #[test]
+    fn effective_workspace_color_prefers_the_pick_then_the_most_specific_rule() {
+        let color = |value| WorkspaceColor::parse(value);
+        let mut state = app_with_workspaces(&["a"]);
+        let root = state.workspaces[0].cached_identity_cwd.clone();
+        let project = root.join("project");
+        state.workspaces[0].cached_identity_cwd = project.join("src");
+        let effective = |state: &AppState| state.effective_workspace_color(&state.workspaces[0]);
+        assert_eq!(effective(&state), None);
+
+        state.workspace_color_rules =
+            color_rules(&[(&project, "rose", None), (&root, "green", None)]);
+        assert_eq!(effective(&state), color("rose"));
+
+        // The user's pick beats every rule, and clearing it shows the rule again.
+        state.workspaces[0].color = color("sky");
+        assert_eq!(effective(&state), color("sky"));
+        state.workspaces[0].color = None;
+        assert_eq!(effective(&state), color("rose"));
+
+        // Rules follow the workspace's identity directory.
+        state.workspaces[0].cached_identity_cwd = root.join("other");
+        assert_eq!(effective(&state), color("green"));
+    }
+
+    #[test]
+    fn effective_workspace_tint_needs_a_color_and_prefers_the_explicit_choice() {
+        let mut state = app_with_workspaces(&["a"]);
+        let cwd = state.workspaces[0].cached_identity_cwd.clone();
+        let tint = |state: &AppState| state.effective_workspace_tint(&state.workspaces[0]);
+        assert!(!tint(&state), "off by default");
+
+        // Never on without an effective color, even when asked for.
+        state.workspace_background_tint = true;
+        state.workspaces[0].background_tint = Some(true);
+        assert!(!tint(&state));
+
+        // An explicit pick follows the global default unless the user chose.
+        state.workspaces[0].color = WorkspaceColor::parse("teal");
+        state.workspaces[0].background_tint = None;
+        assert!(tint(&state));
+        state.workspaces[0].background_tint = Some(false);
+        assert!(!tint(&state));
+
+        // A matching rule's choice beats the global default, not the user's.
+        state.workspaces[0].color = None;
+        state.workspaces[0].background_tint = None;
+        state.workspace_color_rules = color_rules(&[(&cwd, "green", Some(false))]);
+        assert!(!tint(&state));
+        state.workspace_background_tint = false;
+        state.workspace_color_rules = color_rules(&[(&cwd, "green", Some(true))]);
+        assert!(tint(&state));
+        state.workspaces[0].background_tint = Some(false);
+        assert!(!tint(&state));
+        state.workspace_color_rules = color_rules(&[(&cwd, "green", None)]);
+        state.workspaces[0].background_tint = None;
+        assert!(!tint(&state));
+    }
+
+    #[test]
+    fn workspace_auto_colors_skip_rule_colored_workspaces_and_count_rule_colors() {
+        let color = |value| WorkspaceColor::parse(value);
+        let mut state = app_with_workspaces(&["ruled", "plain"]);
+        let ruled = state.workspaces[0].cached_identity_cwd.join("ruled");
+        state.workspaces[0].cached_identity_cwd = ruled.clone();
+        state.workspace_color_rules = color_rules(&[(&ruled, "rose", None)]);
+        state.workspace_auto_colors = true;
+
+        state.auto_assign_workspace_color(0);
+        assert_eq!(state.workspaces[0].color, None, "the rule colors it");
+        state.auto_assign_workspace_color(1);
+        assert_eq!(
+            state.workspaces[1].color,
+            color("orange"),
+            "rose is already shown by the rule"
+        );
+    }
+
+    #[test]
+    fn apply_workspace_git_statuses_redraws_when_the_cwd_crosses_a_color_rule() {
+        let mut state = app_with_workspaces(&["one"]);
+        let cwd = state.workspaces[0].resolved_identity_cwd().unwrap();
+        state.workspace_color_rules = color_rules(&[(&cwd, "green", None)]);
+        let status = |state: &AppState| WorkspaceGitStatus {
+            workspace_id: state.workspaces[0].id.clone(),
+            resolved_identity_cwd: cwd.clone(),
+            status_cache_key: state.workspaces[0].cached_git_status_key.clone(),
+            demand: crate::workspace::GitStatusRefreshDemand::default(),
+            auto_label: state.workspaces[0].cached_auto_label.clone(),
+            branch: None,
+            ahead_behind: None,
+            space: None,
+        };
+        let terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+
+        // Moving within one rule changes nothing visible.
+        state.workspaces[0].cached_identity_cwd = cwd.join("nested");
+        let results = vec![status(&state)];
+        assert!(!state.apply_workspace_git_statuses(&terminal_runtimes, results));
+
+        state.workspaces[0].cached_identity_cwd = cwd.parent().unwrap_or(&cwd).join("elsewhere");
+        let results = vec![status(&state)];
+        assert!(state.apply_workspace_git_statuses(&terminal_runtimes, results));
+        assert_eq!(
+            state.effective_workspace_color(&state.workspaces[0]),
+            WorkspaceColor::parse("green")
+        );
     }
 
     #[test]
@@ -4217,6 +4382,32 @@ mod tests {
         assert!(updates.is_empty());
         assert_eq!(state.terminals.get(&terminal_id).unwrap().cwd, cwd);
         assert!(state.session_dirty);
+        let _ = std::fs::remove_dir_all(cwd);
+    }
+
+    #[test]
+    fn terminal_cwd_report_keeps_the_start_directory_on_the_pane_border() {
+        let mut state = app_with_workspaces(&["active"]);
+        let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
+        let terminal_id = state.workspaces[0]
+            .pane_state(pane_id)
+            .unwrap()
+            .attached_terminal_id
+            .clone();
+        let start = state.terminals[&terminal_id].border_label(true, false);
+        let cwd =
+            std::env::temp_dir().join(format!("herdr-cwd-border-test-{}", std::process::id()));
+        std::fs::create_dir_all(&cwd).unwrap();
+
+        state.handle_app_event(AppEvent::TerminalCwdReported {
+            pane_id,
+            cwd: cwd.clone(),
+        });
+
+        let terminal = &state.terminals[&terminal_id];
+        assert_eq!(terminal.cwd, cwd);
+        assert!(start.is_some());
+        assert_eq!(terminal.border_label(true, false), start);
         let _ = std::fs::remove_dir_all(cwd);
     }
 

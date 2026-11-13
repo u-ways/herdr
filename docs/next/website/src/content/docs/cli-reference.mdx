@@ -159,6 +159,7 @@ herdr workspace get <workspace_id>
 herdr workspace focus <workspace_id>
 herdr workspace rename <workspace_id> <label>
 herdr workspace color <workspace_id> <#rrggbb|#rgb|NAME|random|none>
+herdr workspace background <workspace_id> <on|off|default>
 herdr workspace report-metadata <workspace_id> --source ID [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]
 herdr workspace close <workspace_id> [--group]
 ```
@@ -171,7 +172,9 @@ herdr workspace create --cwd ~/project --label api --no-focus
 
 A workspace is a top-level project or work context. Creating one also creates its first tab and root pane. The JSON response exposes their IDs as `.result.workspace.workspace_id`, `.result.tab.tab_id`, and `.result.root_pane.pane_id`.
 
-`workspace color` sets the workspace's accent color. It accepts `#rrggbb` (the `#` is optional, which avoids shell quoting), `#rgb`, a swatch name (`rose`, `orange`, `yellow`, `green`, `teal`, `sky`, `violet`, `pink`), or `random`, which picks the swatch the other workspaces use least. `none` or `clear` removes the color. The color is saved with the session, shared by every attached client, and returned as lowercase `#rrggbb` in `.result.workspace.color`.
+`workspace color` sets the workspace's accent color. It accepts `#rrggbb` (the `#` is optional, which avoids shell quoting), `#rgb`, a swatch name (`rose`, `orange`, `yellow`, `green`, `teal`, `sky`, `violet`, `pink`), or `random`, which picks the swatch the other workspaces use least. `none` or `clear` removes your pick, so a matching `[ui.workspace_colors]` path rule colors the workspace again. The color is saved with the session, shared by every attached client, and returned as lowercase `#rrggbb` in `.result.workspace.color`, which shows the rule's color when you have not picked one; `.result.workspace.custom_color` is `true` for your own pick.
+
+`workspace background` tints a colored workspace's pane area and sidebar row with a light shade of its color. `on` and `off` save your choice with the session; `default` drops it, so the matching path rule's `background`, then `ui.workspace_colors.background`, decides. `.result.workspace.background_tint` is `true` while the tint shows, which needs a color.
 
 ## Worktrees
 

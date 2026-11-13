@@ -311,6 +311,10 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Show detected/reported agent labels in split pane borders when no manual pane name is set.
 # show_agent_labels_on_pane_borders = false
 
+# Show the directory each pane started in (~ for home) in pane borders, in place of the
+# agent label, when no manual pane name is set. A narrow border keeps the end of the path.
+# show_cwd_on_pane_borders = false
+
 # Hide the tab row when a workspace has exactly one tab.
 # New tabs can still be created with the configured keybinding.
 # hide_tab_bar_when_single_tab = false
@@ -344,10 +348,6 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Accepts: hex (#89b4fa), named colors (cyan, blue, magenta), or rgb(r,g,b)
 # accent = "cyan"
 
-# Give each newly created workspace the least-used color swatch. Existing
-# workspaces are left alone; color them with `herdr workspace color`.
-# auto_workspace_colors = false
-
 # Expanded agent rows. Built-ins are state_icon, state_text, machine, workspace, tab,
 # pane, agent, terminal_title, and terminal_title_stripped.
 # Custom values reported through pane metadata use a $name token.
@@ -368,6 +368,21 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Blank rows between space entries. Set to 1 to restore the previous spacing.
 # row_gap = 0
 # rows = [["state_icon", "workspace"], ["branch", "git_status"]]
+
+# Workspace colors. A color picked from a workspace's right-click menu or with
+# `herdr workspace color` wins over these defaults.
+# [ui.workspace_colors]
+# Give each new workspace that no rule colors the least-used swatch.
+# auto = false
+# Tint the pane area and sidebar row of colored workspaces with a light shade
+# of their color.
+# background = false
+# Color workspaces whose directory is inside path; the most specific rule wins.
+# Rules apply live on `herdr server reload-config`.
+# [[ui.workspace_colors.rules]]
+# path = "~/projects/api"
+# color = "green"     # #rrggbb, #rgb, or rose, orange, yellow, green, teal, sky, violet, pink
+# background = true   # optional; overrides the default above
 
 # Background notification popup delivery
 [ui.toast]
@@ -826,15 +841,43 @@ mod tests {
     }
 
     #[test]
-    fn default_config_lists_ui_auto_workspace_colors_before_nested_tables() {
-        let marker = "# auto_workspace_colors = false";
+    fn default_config_lists_pane_border_cwd_right_after_agent_labels() {
+        let marker = "# show_cwd_on_pane_borders = false\n";
         assert_eq!(DEFAULT_CONFIG.matches(marker).count(), 1);
 
-        let auto_colors = DEFAULT_CONFIG.find(marker).unwrap();
-        let accent = DEFAULT_CONFIG.find("# accent = \"cyan\"").unwrap();
-        let sidebar = DEFAULT_CONFIG.find("# [ui.sidebar.agents]").unwrap();
+        let cwd = DEFAULT_CONFIG.find(marker).unwrap();
+        let agent_labels = DEFAULT_CONFIG
+            .find("# show_agent_labels_on_pane_borders = false")
+            .unwrap();
+        let hide_tab_bar = DEFAULT_CONFIG
+            .find("# hide_tab_bar_when_single_tab = false")
+            .unwrap();
 
-        assert!(accent < auto_colors && auto_colors < sidebar);
+        assert!(agent_labels < cwd && cwd < hide_tab_bar);
+    }
+
+    #[test]
+    fn default_config_lists_workspace_colors_as_a_working_nested_ui_table() {
+        let header = "# [ui.workspace_colors]\n";
+        assert_eq!(DEFAULT_CONFIG.matches(header).count(), 1);
+        let start = DEFAULT_CONFIG.find(header).unwrap();
+        let spaces = DEFAULT_CONFIG.find("# [ui.sidebar.spaces]").unwrap();
+        let toast = DEFAULT_CONFIG.find("\n[ui.toast]").unwrap();
+        assert!(spaces < start && start < toast);
+
+        // Uncommenting the block must give a valid table with a valid rule.
+        let block: String = DEFAULT_CONFIG[start..toast]
+            .lines()
+            .filter_map(|line| line.strip_prefix("# "))
+            .filter(|line| line.starts_with('[') || line.contains(" = "))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let config: config::Config = toml::from_str(&block).unwrap();
+        let colors = &config.ui.workspace_colors;
+        assert!(!colors.auto && !colors.background);
+        assert_eq!(colors.rules.len(), 1);
+        assert_eq!(colors.rules[0].background, Some(true));
+        assert!(config.collect_diagnostics().is_empty());
     }
 
     #[test]

@@ -50,6 +50,7 @@ pub(crate) fn render_collapsed_sidebar(
     snapshot: &ClientShellSnapshot,
     config: &ClientShellConfig,
     selected_workspace_id: Option<&str>,
+    host_background: Option<crate::terminal_theme::RgbColor>,
     hits: &mut ShellHitMap,
 ) {
     let palette = &config.palette;
@@ -72,6 +73,8 @@ pub(crate) fn render_collapsed_sidebar(
         let selected = selected_workspace_id == Some(workspace.workspace_id.as_str());
         if selected {
             buffer.set_style(rect, Style::default().bg(selection_background));
+        } else if let Some(tint) = workspace_tint(workspace, host_background, palette) {
+            buffer.set_style(rect, Style::default().bg(tint));
         } else if workspace.focused {
             buffer.set_style(rect, Style::default().bg(active_background));
         }
@@ -356,6 +359,12 @@ pub(crate) fn render_sidebar(
             dragged,
             palette,
         );
+        // The tint replaces the focused row background; selection and drag keep theirs.
+        if let Some(tint) = workspace_tint(workspace, state.host_background, palette)
+            .filter(|_| !selected && !dragged)
+        {
+            buffer.set_style(rect, Style::default().bg(tint));
+        }
         paint_accent_marker(buffer, rect, workspace_accent(workspace), palette);
         let group_toggle = render_parent_group_toggle(
             buffer,

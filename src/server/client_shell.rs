@@ -85,6 +85,8 @@ pub(super) fn snapshot_with_completions(
                 label: workspace.label,
                 custom_label: state.custom_name.is_some(),
                 color: workspace.color,
+                background_tint: workspace.background_tint,
+                custom_color: workspace.custom_color,
                 branch: state.branch(),
                 git_ahead_behind: state.git_ahead_behind(),
                 tokens,
@@ -766,18 +768,47 @@ mod tests {
         );
         let mut colored = crate::workspace::Workspace::test_new("colored");
         colored.color = crate::workspace::color::WorkspaceColor::parse("Teal");
-        app.state.workspaces = vec![colored, crate::workspace::Workspace::test_new("plain")];
+        let mut ruled = crate::workspace::Workspace::test_new("ruled");
+        let rule_path = std::env::temp_dir().join("ruled");
+        ruled.cached_identity_cwd = rule_path.join("project");
+        (app.state.workspace_color_rules, _) =
+            crate::workspace::color::WorkspaceColorRules::resolve(&[
+                crate::config::WorkspaceColorRule {
+                    path: rule_path.display().to_string(),
+                    color: "rose".into(),
+                    background: Some(true),
+                },
+            ]);
+        app.state.workspaces = vec![
+            colored,
+            ruled,
+            crate::workspace::Workspace::test_new("plain"),
+        ];
         app.state.active = Some(0);
         app.state.ensure_test_terminals();
 
         let snapshot = snapshot(&app, "boot", 1, None, None);
 
+        // Clients get the effective color and tint, and whether the color is the user's pick.
         let colors = snapshot
             .workspaces
             .iter()
-            .map(|workspace| workspace.color.as_deref())
+            .map(|workspace| {
+                (
+                    workspace.color.as_deref(),
+                    workspace.background_tint,
+                    workspace.custom_color,
+                )
+            })
             .collect::<Vec<_>>();
-        assert_eq!(colors, [Some("#59d4cd"), None]);
+        assert_eq!(
+            colors,
+            [
+                (Some("#59d4cd"), false, true),
+                (Some("#fca0a7"), true, false),
+                (None, false, false),
+            ]
+        );
     }
 
     #[test]

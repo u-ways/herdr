@@ -221,8 +221,18 @@ fn workspace_command() -> Command {
                 .about("Set or clear a workspace color")
                 .arg(required("workspace_id", "WORKSPACE_ID"))
                 .arg(required("color", "COLOR").help(
-                    "#rrggbb, #rgb, a swatch name (rose, orange, yellow, green, teal, sky, violet, pink), random for the least-used swatch, or none to clear",
+                    "#rrggbb, #rgb, a swatch name (rose, orange, yellow, green, teal, sky, violet, pink), random for the least-used swatch, or none to clear your pick so a matching path rule applies",
                 )),
+        )
+        .subcommand(
+            Command::new("background")
+                .about("Tint a colored workspace's background")
+                .arg(required("workspace_id", "WORKSPACE_ID"))
+                .arg(
+                    required("tint", "TINT")
+                        .value_parser(["on", "off", "default"])
+                        .help("default follows the matching path rule, then ui.workspace_colors.background"),
+                ),
         )
         .subcommand(
             Command::new("report-metadata")

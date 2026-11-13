@@ -87,6 +87,8 @@ pub enum Method {
     WorkspaceRename(WorkspaceRenameParams),
     #[serde(rename = "workspace.set_color")]
     WorkspaceSetColor(WorkspaceSetColorParams),
+    #[serde(rename = "workspace.set_background_tint")]
+    WorkspaceSetBackgroundTint(WorkspaceSetBackgroundTintParams),
     #[serde(rename = "workspace.move")]
     WorkspaceMove(WorkspaceMoveParams),
     #[serde(rename = "workspace.move_block")]

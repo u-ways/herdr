@@ -181,6 +181,8 @@ pub struct Workspace {
     pub custom_name: Option<String>,
     /// User-assigned accent color, shared by every client and persisted.
     pub color: Option<color::WorkspaceColor>,
+    /// User's background tint choice; `None` follows `[ui.workspace_colors]`.
+    pub background_tint: Option<bool>,
     /// Fallback workspace identity source for tests, old snapshots, or missing runtimes.
     pub identity_cwd: PathBuf,
     /// CWD from which the cached automatic label and Git metadata were derived.
@@ -256,6 +258,7 @@ impl Workspace {
             id,
             custom_name: label,
             color: None,
+            background_tint: None,
             identity_cwd: identity_cwd.clone(),
             cached_identity_cwd: identity_cwd.clone(),
             cached_auto_label,
@@ -409,6 +412,7 @@ impl Workspace {
                 id,
                 custom_name: None,
                 color: None,
+                background_tint: None,
                 identity_cwd: initial_cwd.clone(),
                 cached_identity_cwd: initial_cwd.clone(),
                 cached_auto_label,
@@ -1199,6 +1203,7 @@ impl Workspace {
             id: generate_workspace_id(),
             custom_name: Some(name.to_string()),
             color: None,
+            background_tint: None,
             identity_cwd: identity_cwd.clone(),
             cached_identity_cwd: identity_cwd.clone(),
             cached_auto_label: fallback_label_from_cwd(&identity_cwd),

@@ -1082,12 +1082,20 @@
             "agent_status": {
               "$ref": "#/schemas/event/$defs/AgentStatus"
             },
+            "background_tint": {
+              "description": "Clients tint the workspace's background with `color`.",
+              "type": "boolean"
+            },
             "color": {
-              "description": "Lowercase `#rrggbb` accent color, when one is set.",
+              "description": "Lowercase `#rrggbb` accent color: the workspace's own pick, else the most\nspecific matching `[ui.workspace_colors]` rule's color.",
               "type": [
                 "string",
                 "null"
               ]
+            },
+            "custom_color": {
+              "description": "`color` is the workspace's own pick rather than a path rule's.",
+              "type": "boolean"
             },
             "focused": {
               "type": "boolean"
@@ -4519,10 +4527,28 @@
           ],
           "type": "object"
         },
+        "WorkspaceSetBackgroundTintParams": {
+          "properties": {
+            "enabled": {
+              "description": "Tint the background of the colored workspace. Absent or null follows the\nmatching `[ui.workspace_colors]` rule, then `ui.workspace_colors.background`.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "workspace_id"
+          ],
+          "type": "object"
+        },
         "WorkspaceSetColorParams": {
           "properties": {
             "color": {
-              "description": "`#rrggbb`, `#rgb`, a swatch name (rose, orange, yellow, green, teal, sky,\nviolet, pink), or `random` for the least-used swatch. Absent or null clears.",
+              "description": "`#rrggbb`, `#rgb`, a swatch name (rose, orange, yellow, green, teal, sky,\nviolet, pink), or `random` for the least-used swatch. Absent or null clears\nthe pick, so a matching `[ui.workspace_colors]` rule applies again.",
               "type": [
                 "string",
                 "null"
@@ -5034,6 +5060,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/WorkspaceSetColorParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "workspace.set_background_tint",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/WorkspaceSetBackgroundTintParams"
             }
           },
           "required": [
@@ -10622,12 +10664,20 @@
             "agent_status": {
               "$ref": "#/schemas/success_response/$defs/AgentStatus"
             },
+            "background_tint": {
+              "description": "Clients tint the workspace's background with `color`.",
+              "type": "boolean"
+            },
             "color": {
-              "description": "Lowercase `#rrggbb` accent color, when one is set.",
+              "description": "Lowercase `#rrggbb` accent color: the workspace's own pick, else the most\nspecific matching `[ui.workspace_colors]` rule's color.",
               "type": [
                 "string",
                 "null"
               ]
+            },
+            "custom_color": {
+              "description": "`color` is the workspace's own pick rather than a path rule's.",
+              "type": "boolean"
             },
             "focused": {
               "type": "boolean"

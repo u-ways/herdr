@@ -107,6 +107,8 @@ fn grouped_worktrees_render_parent_branch_and_indented_child() {
         label: "repo-feature".into(),
         custom_label: false,
         color: None,
+        background_tint: false,
+        custom_color: false,
         branch: Some("worktree/feature".into()),
         git_ahead_behind: None,
         tokens: Vec::new(),
@@ -1003,6 +1005,138 @@ fn workspace_color_marks_its_sidebar_and_agent_rows() {
     assert_eq!(buffer[(colored.x, colored.y)].fg, light_teal);
     let divider = state.hits.sidebar_divider;
     assert_eq!(buffer[(divider.x, divider.y)].fg, light_teal);
+}
+
+#[test]
+fn workspace_background_tint_fills_its_sidebar_row_but_not_its_agent_rows() {
+    use crate::config::SpaceSidebarToken;
+    use crate::terminal_theme::RgbColor;
+
+    let host = RgbColor {
+        r: 30,
+        g: 30,
+        b: 46,
+    };
+    let teal = WorkspaceColor::parse("teal").expect("teal swatch");
+    let rose = WorkspaceColor::parse("rose").expect("rose swatch");
+    let mut config = Config::default();
+    config.ui.sidebar.spaces.rows = vec![
+        vec![SpaceSidebarToken::StateIcon, SpaceSidebarToken::Workspace],
+        vec![SpaceSidebarToken::StateText],
+    ];
+    let mut projected = snapshot();
+    projected.workspaces[0].color = Some(teal.to_hex());
+    projected.workspaces[0].background_tint = true;
+    for (number, background_tint) in [(2, true), (3, false)] {
+        projected.workspaces.push(ClientShellWorkspace {
+            workspace_id: format!("ws_{number}"),
+            number,
+            color: Some(rose.to_hex()),
+            background_tint,
+            focused: false,
+            ..projected.workspaces[0].clone()
+        });
+    }
+    projected.agents = vec![ClientShellAgent {
+        pane_id: "pane_1".into(),
+        workspace_id: "ws_1".into(),
+        tab_id: "tab_1".into(),
+        name: Some("agent".into()),
+        display_agent: None,
+        agent: Some("pi".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status: AgentStatus::Idle,
+        state_change_seq: 1,
+        state_labels: Vec::new(),
+        tokens: Vec::new(),
+        focused: true,
+    }];
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+    state.host_background = Some(host);
+    let palette = state.config.palette.clone();
+    let teal_tint = teal.tint(Some(host), &palette).expect("teal tint");
+    let rose_tint = rose.tint(Some(host), &palette).expect("rose tint");
+    let compose = |state: &mut ClientShellState| {
+        let frame = state.compose(106, 30).expect("sidebar frame");
+        frame.to_ratatui_buffer().expect("sidebar buffer")
+    };
+    let row_backgrounds = |state: &ClientShellState, buffer: &Buffer, workspace_id: &str| {
+        let rect = state
+            .hits
+            .workspaces
+            .iter()
+            .find(|hit| hit.workspace_id == workspace_id)
+            .expect("workspace row")
+            .rect;
+        (rect.top()..rect.bottom())
+            .flat_map(|y| (rect.left()..rect.right()).map(move |x| buffer[(x, y)].bg))
+            .collect::<Vec<_>>()
+    };
+
+    // The focused row trades its active background for the tint; marker and bold name stay.
+    let buffer = compose(&mut state);
+    let focused = state.hits.workspaces[0].rect;
+    assert_eq!(focused.height, 2);
+    assert!(row_backgrounds(&state, &buffer, "ws_1")
+        .iter()
+        .all(|&bg| bg == teal_tint));
+    let marker = &buffer[(focused.x, focused.bottom() - 1)];
+    assert_eq!(
+        (marker.symbol(), marker.fg),
+        ("▌", teal.foreground(&palette))
+    );
+    assert!((focused.left()..focused.right())
+        .any(|x| buffer[(x, focused.y)].modifier.contains(Modifier::BOLD)));
+    assert!(row_backgrounds(&state, &buffer, "ws_2")
+        .iter()
+        .all(|&bg| bg == rose_tint));
+    assert!(row_backgrounds(&state, &buffer, "ws_3")
+        .iter()
+        .all(|&bg| bg != rose_tint));
+    let agent = state.hits.agents[0].0;
+    assert!((agent.left()..agent.right()).all(|x| buffer[(x, agent.y)].bg == palette.active_row_bg));
+
+    // The navigation selection and a drag keep their own backgrounds.
+    state.mode = ClientShellMode::Navigate;
+    state.navigate_workspace_id = state.navigation_target(&ClientEndpointId::Local, "ws_2");
+    let buffer = compose(&mut state);
+    assert!(row_backgrounds(&state, &buffer, "ws_2")
+        .iter()
+        .all(|&bg| bg == palette.selection_bg));
+    assert!(row_backgrounds(&state, &buffer, "ws_1")
+        .iter()
+        .all(|&bg| bg == teal_tint));
+    state.mode = ClientShellMode::Terminal;
+    state.navigate_workspace_id = None;
+    state.chrome_drag = Some(ClientChromeDrag::Workspace {
+        source_workspace_id: "ws_2".into(),
+        target: None,
+    });
+    let buffer = compose(&mut state);
+    assert!(row_backgrounds(&state, &buffer, "ws_2")
+        .iter()
+        .all(|&bg| bg == palette.surface1));
+    state.chrome_drag = None;
+
+    // Collapsed, the focused number stays on the color and the rest of the row takes the tint.
+    state.sidebar_collapsed = true;
+    let buffer = compose(&mut state);
+    let focused = state.hits.workspaces[0].rect;
+    let number = &buffer[(focused.x, focused.y)];
+    assert_eq!((number.symbol(), number.bg), ("1", teal.to_ratatui()));
+    assert!((focused.x + 2..focused.right()).all(|x| buffer[(x, focused.y)].bg == teal_tint));
+    assert!(row_backgrounds(&state, &buffer, "ws_2")
+        .iter()
+        .all(|&bg| bg == rose_tint));
+    assert!(row_backgrounds(&state, &buffer, "ws_3")
+        .iter()
+        .all(|&bg| bg != rose_tint));
+    let agent = state.hits.agents[0].0;
+    assert_eq!(buffer[(agent.x + 2, agent.y)].bg, palette.active_row_bg);
 }
 
 #[test]

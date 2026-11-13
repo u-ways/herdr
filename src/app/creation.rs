@@ -410,9 +410,12 @@ impl App {
                     checkout_path: space.checkout_path.display().to_string(),
                     is_linked_worktree: space.is_linked_worktree,
                 }),
-            color: ws
-                .color
+            color: self
+                .state
+                .effective_workspace_color(ws)
                 .map(crate::workspace::color::WorkspaceColor::to_hex),
+            background_tint: self.state.effective_workspace_tint(ws),
+            custom_color: ws.color.is_some(),
         }
     }
 }

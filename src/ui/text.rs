@@ -19,6 +19,27 @@ pub(crate) fn truncate_end(text: &str, max_width: usize) -> String {
     format!("{prefix}…")
 }
 
+/// Like `truncate_end`, but keeps the end of `text`.
+pub(crate) fn truncate_start(text: &str, max_width: usize) -> String {
+    if display_width(text) <= max_width {
+        return text.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+
+    let mut width = 0usize;
+    let mut start = text.len();
+    for (index, ch) in text.char_indices().rev() {
+        width += UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width > max_width - 1 {
+            break;
+        }
+        start = index;
+    }
+    format!("…{}", &text[start..])
+}
+
 fn take_prefix_width(text: &str, max_width: usize) -> String {
     let mut output = String::new();
     let mut width = 0usize;
@@ -43,5 +64,16 @@ mod tests {
 
         assert_eq!(text, "提交 herdr 的反…");
         assert!(display_width(&text) <= 16);
+    }
+
+    #[test]
+    fn truncate_start_keeps_the_end_by_display_width() {
+        let text = truncate_start("提交 herdr 的反馈", 10);
+
+        assert_eq!(text, "…dr 的反馈");
+        assert!(display_width(&text) <= 10);
+        assert_eq!(truncate_start("abc", 3), "abc");
+        assert_eq!(truncate_start("abc", 1), "…");
+        assert_eq!(truncate_start("abc", 0), "");
     }
 }

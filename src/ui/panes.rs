@@ -9,12 +9,13 @@ use ratatui::{
 use super::scrollbar::{render_pane_scrollbar, should_show_scrollbar};
 #[cfg(test)]
 use super::text::display_width;
-use super::text::truncate_end;
+use super::text::{truncate_end, truncate_start};
 use super::widgets::panel_contrast_fg;
 use crate::app::state::Palette;
 use crate::app::AppState;
 use crate::layout::{PaneId, PaneInfo};
 use crate::popup_size::resolve_popup_geometry;
+use crate::terminal::state::BorderLabel;
 use crate::terminal::{TerminalRuntime, TerminalRuntimeRegistry};
 
 pub(crate) fn pane_is_scrolled_back(rt: &TerminalRuntime) -> bool {
@@ -22,13 +23,17 @@ pub(crate) fn pane_is_scrolled_back(rt: &TerminalRuntime) -> bool {
         .is_some_and(|metrics| metrics.offset_from_bottom > 0)
 }
 
-fn pane_border_title(label: &str, pane_width: u16, _focused: bool) -> Option<String> {
+fn pane_border_title(label: &BorderLabel, pane_width: u16, _focused: bool) -> Option<String> {
+    let (label, truncate): (&str, fn(&str, usize) -> String) = match label {
+        BorderLabel::Text(text) => (text, truncate_end),
+        BorderLabel::Path(path) => (path, truncate_start),
+    };
     let label = label.trim();
     if label.is_empty() || pane_width <= 4 {
         return None;
     }
     let max_label_width = pane_width.saturating_sub(4) as usize;
-    Some(format!(" {} ", truncate_end(label, max_label_width)))
+    Some(format!(" {} ", truncate(label, max_label_width)))
 }
 
 // Full view computation reaches this helper for active and background panes.
@@ -608,9 +613,9 @@ fn render_pane_borders(
     render_pane_border_titles(app, ws, pane_infos, frame);
 }
 
-/// The rendered workspace's own color, else the theme accent.
+/// The rendered workspace's effective color, else the theme accent.
 fn focused_border_color(app: &AppState, ws: &crate::workspace::Workspace) -> Color {
-    ws.color
+    app.effective_workspace_color(ws)
         .map_or(app.palette.accent, |color| color.foreground(&app.palette))
 }
 
@@ -752,7 +757,12 @@ fn render_pane_border_titles(
         let Some(title) = ws
             .pane_state(info.id)
             .and_then(|pane| app.terminals.get(&pane.attached_terminal_id))
-            .and_then(|terminal| terminal.border_label(app.show_agent_labels_on_pane_borders))
+            .and_then(|terminal| {
+                terminal.border_label(
+                    app.show_cwd_on_pane_borders,
+                    app.show_agent_labels_on_pane_borders,
+                )
+            })
             .and_then(|label| pane_border_title(&label, info.rect.width, info.is_focused))
         else {
             continue;
@@ -913,7 +923,7 @@ pub(crate) fn foreground_on_palette(color: Rgb, palette: &Palette) -> Color {
     Color::Rgb(r, g, b)
 }
 
-fn mix_rgb(base: Rgb, target: Rgb, amount: f32) -> Rgb {
+pub(crate) fn mix_rgb(base: Rgb, target: Rgb, amount: f32) -> Rgb {
     fn channel(base: u8, target: u8, amount: f32) -> u8 {
         (f32::from(base) + (f32::from(target) - f32::from(base)) * amount).round() as u8
     }
@@ -1009,34 +1019,54 @@ mod tests {
         assert!(cursor.is_none_or(|cursor| !cursor.visible));
     }
 
+    fn text(label: &str) -> BorderLabel {
+        BorderLabel::Text(label.into())
+    }
+
     #[test]
     fn pane_border_title_trims_and_truncates() {
         assert_eq!(
-            pane_border_title(" claude ", 20, false).as_deref(),
+            pane_border_title(&text(" claude "), 20, false).as_deref(),
             Some(" claude ")
         );
         assert_eq!(
-            pane_border_title(" claude ", 20, true).as_deref(),
+            pane_border_title(&text(" claude "), 20, true).as_deref(),
             Some(" claude ")
         );
-        assert_eq!(pane_border_title("", 20, false), None);
+        assert_eq!(pane_border_title(&text(""), 20, false), None);
         assert_eq!(
-            pane_border_title("abcdef", 8, false).as_deref(),
+            pane_border_title(&text("abcdef"), 8, false).as_deref(),
             Some(" abc… ")
         );
         assert_eq!(
-            pane_border_title("abcdef", 8, true).as_deref(),
+            pane_border_title(&text("abcdef"), 8, true).as_deref(),
             Some(" abc… ")
         );
-        assert_eq!(pane_border_title("abcdef", 4, false), None);
+        assert_eq!(pane_border_title(&text("abcdef"), 4, false), None);
     }
 
     #[test]
     fn pane_border_title_truncates_cjk_by_display_width() {
-        let title = pane_border_title("1 模块组织（已定）", 12, false).unwrap();
+        let title = pane_border_title(&text("1 模块组织（已定）"), 12, false).unwrap();
 
         assert_eq!(title, " 1 模块… ");
         assert!(display_width(title.as_str()) <= 10);
+    }
+
+    #[test]
+    fn pane_border_title_keeps_the_end_of_a_narrow_path() {
+        let path = BorderLabel::Path("~/github/mns/API-PLATFORM/ADEPT".into());
+
+        assert_eq!(
+            pane_border_title(&path, 40, true).as_deref(),
+            Some(" ~/github/mns/API-PLATFORM/ADEPT ")
+        );
+        assert_eq!(
+            pane_border_title(&path, 24, true).as_deref(),
+            Some(" …/API-PLATFORM/ADEPT ")
+        );
+        assert_eq!(pane_border_title(&path, 5, true).as_deref(), Some(" … "));
+        assert_eq!(pane_border_title(&path, 4, true), None);
     }
 
     #[test]
@@ -1069,6 +1099,44 @@ mod tests {
         assert_eq!(buffer[(4, 0)].symbol(), "模");
         assert_eq!(buffer[(5, 0)].symbol(), " ");
         assert_eq!(buffer[(6, 0)].symbol(), "块");
+    }
+
+    #[test]
+    fn pane_border_renderer_shows_the_start_directory_in_place_of_the_agent_when_enabled() {
+        let mut app = AppState::test_new();
+        app.show_agent_labels_on_pane_borders = true;
+        app.view.terminal_area = Rect::new(0, 0, 24, 3);
+        let ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        app.view.pane_infos = vec![PaneInfo {
+            id: pane_id,
+            rect: Rect::new(0, 0, 24, 3),
+            inner_rect: Rect::default(),
+            scrollbar_rect: None,
+            borders: Borders::ALL,
+            is_focused: true,
+        }];
+        let terminal_id = ws.tabs[0].panes[&pane_id].attached_terminal_id.clone();
+        let mut terminal_state =
+            TerminalState::new(terminal_id.clone(), "/srv/mns/API-PLATFORM/ADEPT".into());
+        terminal_state.set_detected_state(
+            Some(crate::detect::Agent::Claude),
+            crate::detect::AgentState::Idle,
+        );
+        app.terminals.insert(terminal_id, terminal_state);
+        let top_row = |app: &AppState| {
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(24, 3)).unwrap();
+            terminal
+                .draw(|frame| render_view_pane_borders(app, &ws, &[], frame))
+                .unwrap();
+            let buffer = terminal.backend().buffer().clone();
+            (0..24).map(|x| buffer[(x, 0)].symbol()).collect::<String>()
+        };
+
+        assert!(top_row(&app).contains(" claude "));
+        app.show_cwd_on_pane_borders = true;
+        assert!(top_row(&app).contains(" …/API-PLATFORM/ADEPT "));
     }
 
     #[test]
@@ -1354,23 +1422,23 @@ mod tests {
             terminal.set_manual_label("job".into());
             app.terminals.insert(terminal_id, terminal);
         }
-        let render = |ws: &Workspace| {
+        let render = |app: &AppState, ws: &Workspace| {
             let mut terminal =
                 ratatui::Terminal::new(ratatui::backend::TestBackend::new(16, 3)).unwrap();
             terminal
-                .draw(|frame| render_view_pane_borders(&app, ws, &[], frame))
+                .draw(|frame| render_view_pane_borders(app, ws, &[], frame))
                 .unwrap();
             terminal.backend().buffer().clone()
         };
 
         // Without a workspace color the focused pane keeps the theme accent.
-        let buffer = render(&ws);
+        let buffer = render(&app, &ws);
         assert_eq!(buffer[(0, 1)].style().fg, Some(app.palette.accent));
         assert_eq!(buffer[(2, 0)].style().fg, Some(app.palette.accent));
 
         ws.color = crate::workspace::color::WorkspaceColor::parse("teal");
         let teal = Color::Rgb(0x59, 0xd4, 0xcd);
-        let buffer = render(&ws);
+        let buffer = render(&app, &ws);
         assert_eq!(buffer[(0, 1)].symbol(), "│");
         assert_eq!(buffer[(0, 1)].style().fg, Some(teal));
         assert_eq!(buffer[(2, 0)].symbol(), "j");
@@ -1381,19 +1449,27 @@ mod tests {
 
         // Light themes darken the color so the focused border stays the strongest.
         app.palette = Palette::catppuccin_latte();
-        let render = |ws: &Workspace| {
-            let mut terminal =
-                ratatui::Terminal::new(ratatui::backend::TestBackend::new(16, 3)).unwrap();
-            terminal
-                .draw(|frame| render_view_pane_borders(&app, ws, &[], frame))
-                .unwrap();
-            terminal.backend().buffer().clone()
-        };
-        let buffer = render(&ws);
+        let buffer = render(&app, &ws);
         let light_teal = ws.color.unwrap().foreground(&app.palette);
         assert_ne!(light_teal, teal);
         assert_eq!(buffer[(0, 1)].style().fg, Some(light_teal));
         assert_eq!(buffer[(2, 0)].style().fg, Some(light_teal));
+
+        // Without a pick, a path rule matching the workspace colors the border.
+        ws.color = None;
+        let rule = crate::config::WorkspaceColorRule {
+            path: ws.cached_identity_cwd.display().to_string(),
+            color: "rose".into(),
+            background: None,
+        };
+        app.workspace_color_rules =
+            crate::workspace::color::WorkspaceColorRules::resolve(&[rule]).0;
+        let rose = crate::workspace::color::WorkspaceColor::parse("rose")
+            .unwrap()
+            .foreground(&app.palette);
+        let buffer = render(&app, &ws);
+        assert_eq!(buffer[(0, 1)].style().fg, Some(rose));
+        assert_eq!(buffer[(2, 0)].style().fg, Some(rose));
     }
 
     #[tokio::test]

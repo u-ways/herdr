@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use crate::api::schema::{
     EventData, EventEnvelope, EventKind, ResponseResult, WorkspaceCloseParams,
     WorkspaceCreateParams, WorkspaceMoveBlockParams, WorkspaceMoveParams, WorkspaceRenameParams,
-    WorkspaceReportMetadataParams, WorkspaceSetColorParams, WorkspaceTarget,
+    WorkspaceReportMetadataParams, WorkspaceSetBackgroundTintParams, WorkspaceSetColorParams,
+    WorkspaceTarget,
 };
 use crate::app::App;
 use crate::workspace::color::{WorkspaceColor, SWATCHES};
@@ -164,6 +165,29 @@ impl App {
             return workspace_not_found(id, &params.workspace_id);
         };
         ws.color = color;
+        self.schedule_session_save();
+        self.emit_workspace_updated(index);
+
+        encode_success(
+            id,
+            ResponseResult::WorkspaceInfo {
+                workspace: self.workspace_info(index),
+            },
+        )
+    }
+
+    pub(super) fn handle_workspace_set_background_tint(
+        &mut self,
+        id: String,
+        params: WorkspaceSetBackgroundTintParams,
+    ) -> String {
+        let Some(index) = self.parse_workspace_id(&params.workspace_id) else {
+            return workspace_not_found(id, &params.workspace_id);
+        };
+        let Some(ws) = self.state.workspaces.get_mut(index) else {
+            return workspace_not_found(id, &params.workspace_id);
+        };
+        ws.background_tint = params.enabled;
         self.schedule_session_save();
         self.emit_workspace_updated(index);
 
@@ -622,7 +646,7 @@ mod tests {
         use crate::config::ShellModeConfig;
 
         let mut config = Config::default();
-        config.ui.auto_workspace_colors = true;
+        config.ui.workspace_colors.auto = true;
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
             &config,
@@ -659,6 +683,33 @@ mod tests {
             WorkspaceColor::parse("orange")
         );
         assert_eq!(app.state.workspaces[0].color, WorkspaceColor::parse("rose"));
+
+        // A workspace a path rule colors keeps the rule's live color.
+        let (rules, _) = crate::workspace::color::WorkspaceColorRules::resolve(&[
+            crate::config::WorkspaceColorRule {
+                path: std::env::temp_dir().display().to_string(),
+                color: "#123456".into(),
+                background: None,
+            },
+        ]);
+        app.state.workspace_color_rules = rules;
+        let response = app.handle_workspace_create(
+            "req".into(),
+            WorkspaceCreateParams {
+                source_workspace_id: None,
+                cwd: Some(std::env::temp_dir().display().to_string()),
+                focus: false,
+                label: None,
+                env: Default::default(),
+            },
+        );
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::WorkspaceCreated { workspace, .. } = success.result else {
+            panic!("unexpected create response: {response}");
+        };
+        assert_eq!(workspace.color.as_deref(), Some("#123456"));
+        assert!(!workspace.custom_color);
+        assert_eq!(app.state.workspaces[2].color, None);
         shutdown_test_runtimes(&mut app);
     }
 
@@ -1175,6 +1226,68 @@ mod tests {
             WorkspaceSetColorParams {
                 workspace_id: "w_999".into(),
                 color: Some("teal".into()),
+            },
+        );
+        let error: ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(error.error.code, "workspace_not_found");
+    }
+
+    #[test]
+    fn workspace_set_background_tint_turns_on_off_and_back_to_default() {
+        let event_hub = crate::api::EventHub::default();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            event_hub.clone(),
+        );
+        app.state.workspaces = vec![Workspace::test_new("one")];
+        app.state.workspaces[0].color = WorkspaceColor::parse("teal");
+        app.state.workspace_background_tint = true;
+        let workspace_id = app.public_workspace_id(0);
+        let set_tint = |app: &mut App, enabled: Option<bool>| {
+            let request = crate::api::schema::Request {
+                id: "req".into(),
+                method: crate::api::schema::Method::WorkspaceSetBackgroundTint(
+                    WorkspaceSetBackgroundTintParams {
+                        workspace_id: workspace_id.clone(),
+                        enabled,
+                    },
+                ),
+            };
+            assert!(crate::api::request_changes_ui(&request));
+            let response = app.handle_api_request(request);
+            match serde_json::from_str::<SuccessResponse>(&response)
+                .unwrap()
+                .result
+            {
+                ResponseResult::WorkspaceInfo { workspace } => workspace,
+                other => panic!("unexpected result {other:?}"),
+            }
+        };
+
+        assert!(!set_tint(&mut app, Some(false)).background_tint);
+        assert_eq!(app.state.workspaces[0].background_tint, Some(false));
+        assert!(set_tint(&mut app, Some(true)).background_tint);
+        assert!(event_hub.events_after(0).iter().any(|(_, event)| matches!(
+            &event.data,
+            EventData::WorkspaceUpdated { workspace } if workspace.background_tint
+        )));
+
+        // `default` drops the choice and follows `ui.workspace_colors.background`.
+        let workspace = set_tint(&mut app, None);
+        assert!(workspace.background_tint && workspace.custom_color);
+        assert_eq!(app.state.workspaces[0].background_tint, None);
+        app.state.workspace_background_tint = false;
+        assert!(!app.workspace_info(0).background_tint);
+
+        let response = app.handle_workspace_set_background_tint(
+            "req".into(),
+            WorkspaceSetBackgroundTintParams {
+                workspace_id: "w_999".into(),
+                enabled: Some(true),
             },
         );
         let error: ErrorResponse = serde_json::from_str(&response).unwrap();

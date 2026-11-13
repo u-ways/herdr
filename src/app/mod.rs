@@ -535,12 +535,18 @@ impl App {
             sidebar_spaces: config.ui.sidebar.spaces.clone(),
             next_agent_state_change_seq: 0,
             confirm_close: config.ui.confirm_close,
-            auto_workspace_colors: config.ui.auto_workspace_colors,
+            workspace_auto_colors: config.ui.workspace_colors.auto,
+            workspace_background_tint: config.ui.workspace_colors.background,
+            workspace_color_rules: crate::workspace::color::WorkspaceColorRules::resolve(
+                &config.ui.workspace_colors.rules,
+            )
+            .0,
             pane_borders: config.ui.pane_borders,
             pane_outer_borders: config.ui.pane_outer_borders,
             pane_scrollbars: config.ui.pane_scrollbars,
             pane_gaps: config.ui.pane_gaps,
             show_agent_labels_on_pane_borders: config.ui.show_agent_labels_on_pane_borders,
+            show_cwd_on_pane_borders: config.ui.show_cwd_on_pane_borders,
             tab_bar_right: Vec::new(),
             tab_bar_right_separator: String::new(),
             reveal_hidden_cursor_for_cjk_ime: config.experimental.reveal_hidden_cursor_for_cjk_ime,
@@ -898,16 +904,24 @@ impl App {
                 diagnostics.extend(crate::config::window_title_diagnostics(
                     &config.ui.window_title,
                 ));
+                let (workspace_color_rules, rule_diagnostics) =
+                    crate::workspace::color::WorkspaceColorRules::resolve(
+                        &config.ui.workspace_colors.rules,
+                    );
+                diagnostics.extend(rule_diagnostics);
 
                 self.loaded_host_cursor = config.ui.host_cursor;
                 self.state.confirm_close = config.ui.confirm_close;
-                self.state.auto_workspace_colors = config.ui.auto_workspace_colors;
+                self.state.workspace_auto_colors = config.ui.workspace_colors.auto;
+                self.state.workspace_background_tint = config.ui.workspace_colors.background;
+                self.state.workspace_color_rules = workspace_color_rules;
                 self.state.pane_borders = config.ui.pane_borders;
                 self.state.pane_outer_borders = config.ui.pane_outer_borders;
                 self.state.pane_scrollbars = config.ui.pane_scrollbars;
                 self.state.pane_gaps = config.ui.pane_gaps;
                 self.state.show_agent_labels_on_pane_borders =
                     config.ui.show_agent_labels_on_pane_borders;
+                self.state.show_cwd_on_pane_borders = config.ui.show_cwd_on_pane_borders;
                 self.configure_tab_bar_status(
                     &config.ui.tab_bar_right,
                     &config.ui.tab_bar_right_separator,
@@ -1855,6 +1869,91 @@ mod tests {
         let report = app.apply_live_config(&config, &[], &["session".into()], false);
         assert!(report.diagnostics.is_empty());
         assert_eq!(app.startup_per_agent_delay, Duration::from_millis(100));
+    }
+
+    #[test]
+    fn reload_config_applies_workspace_color_rules_to_every_workspace_live() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("ruled"), Workspace::test_new("picked")];
+        app.state.workspaces[1].color = crate::workspace::color::WorkspaceColor::parse("violet");
+        let cwd = app.state.workspaces[0]
+            .cached_identity_cwd
+            .display()
+            .to_string();
+        let colors = |app: &App| {
+            (0..app.state.workspaces.len())
+                .map(|index| {
+                    let info = app.workspace_info(index);
+                    (info.color, info.background_tint, info.custom_color)
+                })
+                .collect::<Vec<_>>()
+        };
+        let rule = |color: &str, background| crate::config::WorkspaceColorRule {
+            path: cwd.clone(),
+            color: color.into(),
+            background,
+        };
+
+        let mut config = Config::default();
+        config.ui.workspace_colors.background = true;
+        config.ui.workspace_colors.rules = vec![
+            rule("green", None),
+            crate::config::WorkspaceColorRule {
+                path: "relative".into(),
+                ..rule("rose", None)
+            },
+        ];
+        let report = app.apply_live_config(&config, &[], &[], false);
+        assert_eq!(report.diagnostics.len(), 1, "{:?}", report.diagnostics);
+        assert!(report.diagnostics[0].starts_with("ui.workspace_colors.rules[1] path"));
+        assert_eq!(
+            colors(&app),
+            [
+                (Some("#90d192".into()), true, false),
+                (Some("#bcb2ff".into()), true, true),
+            ]
+        );
+
+        config.ui.workspace_colors.rules = vec![rule("#123456", Some(false))];
+        app.apply_live_config(&config, &[], &[], false);
+        assert_eq!(
+            colors(&app),
+            [
+                (Some("#123456".into()), false, false),
+                (Some("#bcb2ff".into()), false, true),
+            ]
+        );
+
+        config.ui.workspace_colors.rules.clear();
+        app.apply_live_config(&config, &[], &[], false);
+        assert_eq!(
+            colors(&app),
+            [(None, false, false), (Some("#bcb2ff".into()), true, true)]
+        );
+
+        // An invalid [ui] section keeps the current rules.
+        config.ui.workspace_colors.rules = vec![rule("green", None)];
+        app.apply_live_config(&config, &[], &["ui".into()], false);
+        assert_eq!(colors(&app)[0], (None, false, false));
+    }
+
+    #[test]
+    fn reload_config_toggles_cwd_on_pane_borders_live() {
+        let mut app = test_app();
+        assert!(!app.state.show_cwd_on_pane_borders);
+        let mut config = Config::default();
+
+        config.ui.show_cwd_on_pane_borders = true;
+        app.apply_live_config(&config, &[], &[], false);
+        assert!(app.state.show_cwd_on_pane_borders);
+
+        // An invalid [ui] section keeps the current setting.
+        config.ui.show_cwd_on_pane_borders = false;
+        app.apply_live_config(&config, &[], &["ui".into()], false);
+        assert!(app.state.show_cwd_on_pane_borders);
+
+        app.apply_live_config(&config, &[], &[], false);
+        assert!(!app.state.show_cwd_on_pane_borders);
     }
 
     #[test]

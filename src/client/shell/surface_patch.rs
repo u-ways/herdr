@@ -176,14 +176,26 @@ impl ClientShellState {
             let (cols, rows) = self.last_composed_size.unwrap_or_default();
             self.layout(cols, rows).pane_surface
         });
+        // Forwarded rows skip composition, so they take its pane surface tint here.
+        let tint = fast_path_area
+            .and(self.snapshot.as_deref())
+            .and_then(|snapshot| {
+                focused_workspace_tint(snapshot, self.host_background, &self.config.palette)
+            });
         let composed_patch = fast_path_area.map(|area| ClientComposedSurfacePatch {
             rows: patch
                 .rows
                 .iter()
-                .map(|row| crate::protocol::PaneSurfacePatchRow {
-                    x: area.x.saturating_add(row.x),
-                    y: area.y.saturating_add(row.y),
-                    cells: row.cells.clone(),
+                .map(|row| {
+                    let mut cells = row.cells.clone();
+                    if let Some(tint) = tint {
+                        tint_default_background(&mut cells, tint);
+                    }
+                    crate::protocol::PaneSurfacePatchRow {
+                        x: area.x.saturating_add(row.x),
+                        y: area.y.saturating_add(row.y),
+                        cells,
+                    }
                 })
                 .collect(),
             cursor: patch

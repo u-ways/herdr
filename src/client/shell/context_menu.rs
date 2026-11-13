@@ -51,13 +51,29 @@ impl ClientContextMenuOverlay {
                     Action::ToggleGroup,
                 ),
             ],
-            ClientContextMenuTarget::WorkspaceColor { current, .. } => {
+            ClientContextMenuTarget::WorkspaceColor {
+                current,
+                background_tint,
+                custom_color,
+                ..
+            } => {
                 let mut items = (0u8..)
                     .zip(SWATCHES)
                     .map(|(index, (name, _))| item(name, Action::SetColor(index)))
                     .collect::<Vec<_>>();
-                items.push(item("Random", Action::RandomColor));
                 if current.is_some() {
+                    items.push(item(
+                        if *background_tint {
+                            "Tint background ✓"
+                        } else {
+                            "Tint background"
+                        },
+                        Action::ToggleBackgroundTint,
+                    ));
+                }
+                items.push(item("Random", Action::RandomColor));
+                // A path rule's color comes back after Clear, so only the user's pick offers it.
+                if *custom_color {
                     items.push(item("Clear", Action::ClearColor));
                 }
                 items
@@ -221,8 +237,12 @@ impl ClientShellState {
                 action,
                 outcome,
             ),
-            ClientContextMenuTarget::WorkspaceColor { workspace_id, .. } => {
-                self.activate_workspace_color_action(workspace_id, action, outcome)
+            ClientContextMenuTarget::WorkspaceColor {
+                workspace_id,
+                background_tint,
+                ..
+            } => {
+                self.activate_workspace_color_action(workspace_id, background_tint, action, outcome)
             }
             ClientContextMenuTarget::Tab {
                 tab_id,
@@ -281,14 +301,20 @@ impl ClientShellState {
                 self.request_workspace_close(workspace_id, Some(close_group), outcome);
             }
             ClientContextMenuAction::Color => {
-                let current = self.snapshot.as_deref().and_then(|snapshot| {
+                let colors = self.snapshot.as_deref().and_then(|snapshot| {
                     snapshot
                         .workspaces
                         .iter()
                         .find(|workspace| workspace.workspace_id == workspace_id)
-                        .map(workspace_accent)
+                        .map(|workspace| {
+                            (
+                                workspace_accent(workspace),
+                                workspace.background_tint,
+                                workspace.custom_color,
+                            )
+                        })
                 });
-                if let Some(current) = current {
+                if let Some((current, background_tint, custom_color)) = colors {
                     let highlighted = SWATCHES
                         .iter()
                         .position(|&(_, swatch)| Some(swatch) == current)
@@ -298,6 +324,8 @@ impl ClientShellState {
                             target: ClientContextMenuTarget::WorkspaceColor {
                                 workspace_id,
                                 current,
+                                background_tint,
+                                custom_color,
                             },
                             x,
                             y,
@@ -336,6 +364,7 @@ impl ClientShellState {
     fn activate_workspace_color_action(
         &mut self,
         workspace_id: String,
+        background_tint: bool,
         action: ClientContextMenuAction,
         outcome: &mut ClientShellInput,
     ) {
@@ -345,6 +374,18 @@ impl ClientShellState {
                     return;
                 };
                 Some(swatch.to_hex())
+            }
+            ClientContextMenuAction::ToggleBackgroundTint => {
+                self.push_endpoint_method(
+                    crate::api::schema::Method::WorkspaceSetBackgroundTint(
+                        crate::api::schema::WorkspaceSetBackgroundTintParams {
+                            workspace_id,
+                            enabled: Some(!background_tint),
+                        },
+                    ),
+                    outcome,
+                );
+                return;
             }
             ClientContextMenuAction::RandomColor => Some("random".to_owned()),
             ClientContextMenuAction::ClearColor => None,

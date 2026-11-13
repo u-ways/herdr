@@ -667,11 +667,12 @@ mod tests {
             seq: None,
         });
 
-        assert_eq!(
-            terminal.border_label(false).as_deref(),
-            Some("Prompt title")
-        );
-        assert_eq!(terminal.border_label(true).as_deref(), Some("Prompt title"));
+        let title = Some(crate::terminal::state::BorderLabel::Text(
+            "Prompt title".into(),
+        ));
+        assert_eq!(terminal.border_label(false, false), title);
+        assert_eq!(terminal.border_label(false, true), title);
+        assert_eq!(terminal.border_label(true, true), title);
     }
 
     #[test]
