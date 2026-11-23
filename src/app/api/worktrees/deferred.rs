@@ -665,7 +665,7 @@ impl App {
                     .unwrap_or(&workspace.identity_cwd);
                 if crate::worktree::canonical_or_original(current_checkout) != removed_checkout {
                     if let Some(terminal) = self.state.terminals.get_mut(&terminal_id) {
-                        terminal.set_launch_cwd(current_checkout.clone());
+                        terminal.cwd = current_checkout.clone();
                     }
                 }
                 if self

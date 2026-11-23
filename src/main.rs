@@ -311,8 +311,9 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Show detected/reported agent labels in split pane borders when no manual pane name is set.
 # show_agent_labels_on_pane_borders = false
 
-# Show the directory each pane started in (~ for home) in pane borders, in place of the
-# agent label, when no manual pane name is set. A narrow border keeps the end of the path.
+# Show each pane's current directory (~ for home) in pane borders, in place of the agent
+# label, when no manual pane name is set. It follows `cd` when the shell reports its
+# directory with OSC 7. A narrow border keeps the end of the path.
 # show_cwd_on_pane_borders = false
 
 # Hide the tab row when a workspace has exactly one tab.

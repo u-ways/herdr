@@ -459,9 +459,6 @@ fn unavailable_restored_terminal(
     let mut terminal = TerminalState::new(TerminalId::alloc(), cwd);
     terminal.restore_error = Some(reason);
     if let Some(pane) = pane {
-        if let Some(start_cwd) = pane.start_cwd.clone() {
-            terminal.set_start_cwd(start_cwd);
-        }
         terminal.manual_label = pane.label.clone();
         terminal.launch_argv = pane.launch_argv.clone();
         if let Some(session) = restored_terminal_agent_session(pane.agent_session.as_ref(), false) {
@@ -545,7 +542,6 @@ fn restore_tab(
             continue;
         }
 
-        let saved_start_cwd = saved_pane.and_then(|p| p.start_cwd.clone());
         let saved_label = saved_pane.and_then(|p| p.label.clone());
         let saved_agent_name = saved_pane.and_then(|p| p.agent_name.clone());
         let saved_managed_agent = saved_pane
@@ -607,9 +603,6 @@ fn restore_tab(
             let terminal_id = TerminalId::alloc();
             let mut terminal = TerminalState::new(terminal_id.clone(), cwd.clone())
                 .with_pending_agent_resume_plan(plan);
-            if let Some(start_cwd) = saved_start_cwd {
-                terminal.set_start_cwd(start_cwd);
-            }
             if let Some(label) = saved_label {
                 terminal.set_manual_label(label);
             }
@@ -709,9 +702,6 @@ fn restore_tab(
                     if let Some(argv) = saved_launch_argv {
                         terminal = terminal.with_launch_argv(argv).with_respawn_shell_on_exit();
                     }
-                }
-                if let Some(start_cwd) = saved_start_cwd {
-                    terminal.set_start_cwd(start_cwd);
                 }
                 if let Some(label) = saved_label {
                     terminal.set_manual_label(label);
@@ -1543,62 +1533,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn restore_keeps_the_directory_each_pane_started_in() {
-        let mut snapshot: SessionSnapshot = serde_json::from_str(include_str!(
-            "../../tests/fixtures/session/current-herdr-session.json"
-        ))
-        .unwrap();
-        let cwd = std::env::current_dir().unwrap();
-        let start = cwd.join("__herdr_restore_start_directory__");
-        for workspace in &mut snapshot.workspaces {
-            workspace.identity_cwd = cwd.clone();
-            for pane in workspace
-                .tabs
-                .iter_mut()
-                .flat_map(|tab| tab.panes.values_mut())
-            {
-                pane.cwd = cwd.clone();
-                pane.start_cwd = Some(start.clone());
-            }
-        }
-        // An unavailable pane keeps its start directory as well.
-        snapshot.workspaces[0].tabs[0]
-            .panes
-            .get_mut(&1)
-            .unwrap()
-            .cwd = cwd.join("__herdr_missing_restore_directory__");
-        let (events, _rx) = mpsc::channel(32);
-        let (workspaces, terminals, runtimes) = restore(
-            &snapshot,
-            None,
-            24,
-            80,
-            0,
-            test_restore_shell(),
-            crate::config::ShellModeConfig::NonLogin,
-            false,
-            events,
-            Arc::new(Notify::new()),
-            Arc::new(RenderSignal::new()),
-        );
-
-        assert_eq!(terminals.len(), 3);
-        for terminal in terminals.values() {
-            assert_eq!(terminal.start_cwd(), start);
-        }
-        let runtimes = crate::terminal::TerminalRuntimeRegistry::from(runtimes);
-        let captured = crate::persist::capture(&workspaces, &terminals, &runtimes, Some(0), 0);
-        for pane in captured
-            .workspaces
-            .iter()
-            .flat_map(|workspace| &workspace.tabs)
-            .flat_map(|tab| tab.panes.values())
-        {
-            assert_eq!(pane.start_cwd.as_ref(), Some(&start));
-        }
-    }
-
-    #[tokio::test]
     async fn restore_carries_persisted_agent_session_metadata() {
         let cwd = std::env::current_dir().unwrap();
         let snapshot = SessionSnapshot {
@@ -1621,7 +1555,6 @@ mod tests {
                         0,
                         super::super::snapshot::PaneSnapshot {
                             cwd,
-                            start_cwd: None,
                             label: Some("reviewer".into()),
                             agent_name: Some("reviewer".into()),
                             managed_agent_kind: Some("opencode".into()),
@@ -1711,7 +1644,6 @@ mod tests {
                             10,
                             super::super::snapshot::PaneSnapshot {
                                 cwd: cwd.clone(),
-                                start_cwd: None,
                                 label: None,
                                 agent_name: None,
                                 managed_agent_kind: None,
@@ -1724,7 +1656,6 @@ mod tests {
                             20,
                             super::super::snapshot::PaneSnapshot {
                                 cwd: cwd.clone(),
-                                start_cwd: None,
                                 label: None,
                                 agent_name: None,
                                 managed_agent_kind: None,
@@ -1779,7 +1710,6 @@ mod tests {
                 id.parse::<u32>().unwrap(),
                 super::super::snapshot::PaneSnapshot {
                     cwd: cwd.clone(),
-                    start_cwd: None,
                     label: None,
                     agent_name: None,
                     managed_agent_kind: None,
@@ -1791,7 +1721,6 @@ mod tests {
         };
         let final_pane = super::super::snapshot::PaneSnapshot {
             cwd: cwd.clone(),
-            start_cwd: None,
             label: Some("planner".into()),
             agent_name: Some("planner".into()),
             managed_agent_kind: None,
@@ -1909,7 +1838,6 @@ mod tests {
                     0,
                     super::super::snapshot::PaneSnapshot {
                         cwd: cwd.clone(),
-                        start_cwd: None,
                         label: None,
                         agent_name: None,
                         managed_agent_kind: None,
@@ -2024,7 +1952,6 @@ mod tests {
                         0,
                         super::super::snapshot::PaneSnapshot {
                             cwd,
-                            start_cwd: None,
                             label: None,
                             agent_name: None,
                             managed_agent_kind: None,
@@ -2336,7 +2263,6 @@ mod tests {
             0,
             super::super::snapshot::PaneSnapshot {
                 cwd: cwd.clone(),
-                start_cwd: None,
                 label: None,
                 agent_name: None,
                 managed_agent_kind: None,

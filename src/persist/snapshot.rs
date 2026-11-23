@@ -121,9 +121,6 @@ pub struct TabSnapshot {
 #[derive(Serialize, Deserialize)]
 pub struct PaneSnapshot {
     pub cwd: PathBuf,
-    /// The directory the pane started in; absent when it is `cwd`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start_cwd: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -368,10 +365,6 @@ fn capture_tab(
             .and_then(|runtime| runtime.cwd_for_persistence())
             .or_else(|| terminal.map(|terminal| terminal.cwd.clone()))
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| "/".into()));
-        let start_cwd = terminal
-            .map(|terminal| terminal.start_cwd())
-            .filter(|start_cwd| *start_cwd != cwd)
-            .map(|start_cwd| start_cwd.to_path_buf());
         let label = terminal.and_then(|terminal| terminal.manual_label.clone());
         let (agent_name, managed_agent_kind) = terminal
             .filter(|terminal| !terminal.managed_agent_launch_pending())
@@ -417,7 +410,6 @@ fn capture_tab(
             id.raw(),
             PaneSnapshot {
                 cwd,
-                start_cwd,
                 label,
                 agent_name,
                 managed_agent_kind,
@@ -445,9 +437,8 @@ pub(super) fn layout_fingerprint(snapshot: &SessionSnapshot) -> Option<String> {
     let mut collapsed: Vec<_> = snapshot.collapsed_space_keys.iter().collect();
     collapsed.sort_unstable();
     value["collapsed_space_keys"] = serde_json::to_value(collapsed).ok()?;
-    // Colors, tints, and start directories are not layout, and older binaries
-    // drop them on load; hashing them would make those binaries discard this
-    // session's pane history.
+    // Colors and tints are not layout, and older binaries drop them on load;
+    // hashing them would make those binaries discard this session's pane history.
     if let Some(workspaces) = value["workspaces"].as_array_mut() {
         for workspace in workspaces
             .iter_mut()
@@ -455,17 +446,6 @@ pub(super) fn layout_fingerprint(snapshot: &SessionSnapshot) -> Option<String> {
         {
             workspace.remove("color");
             workspace.remove("background_tint");
-            let panes = workspace
-                .get_mut("tabs")
-                .and_then(serde_json::Value::as_array_mut)
-                .into_iter()
-                .flatten()
-                .filter_map(|tab| tab.get_mut("panes")?.as_object_mut())
-                .flat_map(|panes| panes.values_mut())
-                .filter_map(serde_json::Value::as_object_mut);
-            for pane in panes {
-                pane.remove("start_cwd");
-            }
         }
     }
     let bytes = serde_json::to_vec(&value).ok()?;
@@ -725,24 +705,6 @@ mod tests {
     }
 
     #[test]
-    fn layout_fingerprint_ignores_pane_start_directories() {
-        let mut snapshot = parse_snapshot(include_str!(
-            "../../tests/fixtures/session/current-herdr-session.json"
-        ))
-        .unwrap();
-        let expected = layout_fingerprint(&snapshot).unwrap();
-        for pane in snapshot
-            .workspaces
-            .iter_mut()
-            .flat_map(|workspace| &mut workspace.tabs)
-            .flat_map(|tab| tab.panes.values_mut())
-        {
-            pane.start_cwd = Some(PathBuf::from("/tmp/started"));
-        }
-        assert_eq!(layout_fingerprint(&snapshot).unwrap(), expected);
-    }
-
-    #[test]
     fn round_trip_empty_session() {
         let snap = SessionSnapshot {
             version: SNAPSHOT_VERSION,
@@ -790,7 +752,6 @@ mod tests {
             0,
             PaneSnapshot {
                 cwd: PathBuf::from("/home/can/Projects/herdr"),
-                start_cwd: None,
                 label: None,
                 agent_name: None,
                 managed_agent_kind: None,
@@ -803,7 +764,6 @@ mod tests {
             1,
             PaneSnapshot {
                 cwd: PathBuf::from("/home/can/Projects/website"),
-                start_cwd: None,
                 label: Some("website".into()),
                 agent_name: None,
                 managed_agent_kind: None,
@@ -1331,37 +1291,6 @@ mod tests {
         assert_eq!(tab.panes[&second.raw()].cwd, PathBuf::from("/tmp/herdr"));
     }
 
-    #[test]
-    fn capture_saves_a_pane_start_directory_only_once_the_pane_moved() {
-        let mut state = state_with_workspaces(&["one"]);
-        let root = state.workspaces[0].tabs[0].root_pane;
-        let second = state.workspaces[0].test_split(Direction::Horizontal);
-        state.ensure_test_terminals();
-        let tab = &state.workspaces[0].tabs[0];
-        let root_terminal_id = tab.panes[&root].attached_terminal_id.clone();
-        let second_terminal_id = tab.panes[&second].attached_terminal_id.clone();
-        let moved = state.terminals.get_mut(&root_terminal_id).unwrap();
-        moved.set_launch_cwd(PathBuf::from("/tmp/started"));
-        moved.cwd = PathBuf::from("/tmp/moved");
-        state
-            .terminals
-            .get_mut(&second_terminal_id)
-            .unwrap()
-            .set_launch_cwd(PathBuf::from("/tmp/stayed"));
-
-        let json = serde_json::to_value(capture_from_state(&state)).unwrap();
-        let panes = &json["workspaces"][0]["tabs"][0]["panes"];
-        assert_eq!(panes[root.raw().to_string()]["start_cwd"], "/tmp/started");
-        assert!(panes[second.raw().to_string()].get("start_cwd").is_none());
-        let restored = parse_snapshot(&json.to_string()).unwrap();
-        let panes = &restored.workspaces[0].tabs[0].panes;
-        assert_eq!(
-            panes[&root.raw()].start_cwd,
-            Some(PathBuf::from("/tmp/started"))
-        );
-        assert_eq!(panes[&second.raw()].start_cwd, None);
-    }
-
     #[tokio::test]
     async fn capture_contract_tracks_pane_history_from_runtime() {
         let state = state_with_workspaces(&["one"]);
@@ -1575,7 +1504,6 @@ mod tests {
             0,
             PaneSnapshot {
                 cwd: PathBuf::from("/tmp/this-directory-does-not-exist-for-herdr-test"),
-                start_cwd: None,
                 label: None,
                 agent_name: None,
                 managed_agent_kind: None,
@@ -1590,7 +1518,6 @@ mod tests {
                 cwd: std::env::var("HOME")
                     .map(PathBuf::from)
                     .unwrap_or_else(|_| PathBuf::from("/tmp")),
-                start_cwd: None,
                 label: None,
                 agent_name: None,
                 managed_agent_kind: None,

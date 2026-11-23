@@ -980,8 +980,9 @@ pub struct UiConfig {
     pub pane_gaps: bool,
     /// Show agent labels in split pane borders when no manual pane label is set. Default: false.
     pub show_agent_labels_on_pane_borders: bool,
-    /// Show the directory a pane started in, with `~` for home, in its border
-    /// in place of the agent label when no manual pane label is set. Default: false.
+    /// Show the pane's current directory (as its shell reports it with OSC 7), with `~` for
+    /// home, in its border in place of the agent label when no manual pane label is set.
+    /// Default: false.
     pub show_cwd_on_pane_borders: bool,
     /// Hide the tab row when the workspace has one tab. Default: false.
     pub hide_tab_bar_when_single_tab: bool,

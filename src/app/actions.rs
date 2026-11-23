@@ -4386,7 +4386,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_cwd_report_keeps_the_start_directory_on_the_pane_border() {
+    fn terminal_cwd_report_moves_the_pane_border_directory() {
         let mut state = app_with_workspaces(&["active"]);
         let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
         let terminal_id = state.workspaces[0]
@@ -4394,7 +4394,6 @@ mod tests {
             .unwrap()
             .attached_terminal_id
             .clone();
-        let start = state.terminals[&terminal_id].border_label(true, false);
         let cwd =
             std::env::temp_dir().join(format!("herdr-cwd-border-test-{}", std::process::id()));
         std::fs::create_dir_all(&cwd).unwrap();
@@ -4404,10 +4403,12 @@ mod tests {
             cwd: cwd.clone(),
         });
 
-        let terminal = &state.terminals[&terminal_id];
-        assert_eq!(terminal.cwd, cwd);
-        assert!(start.is_some());
-        assert_eq!(terminal.border_label(true, false), start);
+        assert_eq!(
+            state.terminals[&terminal_id].border_label(true, false),
+            Some(crate::terminal::state::BorderLabel::Path(
+                cwd.display().to_string()
+            ))
+        );
         let _ = std::fs::remove_dir_all(cwd);
     }
 

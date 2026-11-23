@@ -313,7 +313,7 @@ The sidebar is the main Herdr dashboard. Search `ui.` in the [Config reference](
 
 `ui.pane_borders` accepts `"auto"` (the default, borders only for split panes), `"always"` (also frame a single pane), or `"off"`. A single-pane frame requires `ui.pane_outer_borders = true`, because all its edges are outer edges. Existing boolean values remain valid: `true` means `"auto"` and `false` means `"off"`.
 
-`ui.show_cwd_on_pane_borders = true` titles each pane border with the directory the pane started in, such as `~/projects/api`, in place of its agent label. It does not follow later `cd`s. A title the pane reports or a name you gave it still wins, and a narrow border keeps the end of the path.
+`ui.show_cwd_on_pane_borders = true` titles each pane border with the pane's current directory, such as `~/projects/api`, in place of its agent label. It follows `cd` when the shell reports its directory with OSC 7 (`file://` URI, empty or `localhost` host); otherwise it shows the directory the pane started in. A title the pane reports or a name you gave it still wins, and a narrow border keeps the end of the path.
 
 Each workspace can have an accent color, shown on its sidebar rows, its agents' rows, the active tab, the sidebar separator, and the focused pane border when one is drawn. Right-click a workspace and choose **Color...** to pick a swatch, a random one, or clear your pick, or run `herdr workspace color`. **Tint background** in that menu, or `herdr workspace background`, also shades a colored workspace's pane area and its own sidebar row with a light tint of its color; the tint is off by default.
 

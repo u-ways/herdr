@@ -1003,7 +1003,7 @@
           "key": "ui.show_cwd_on_pane_borders",
           "type": "boolean",
           "default": "false",
-          "description": "Show the directory each pane started in, with ~ for the home directory, in its border in place of the agent label when no manual pane label is set. A narrow border keeps the end of the path."
+          "description": "Show each pane's current directory, as its shell reports it with OSC 7, with ~ for the home directory, in its border in place of the agent label when no manual pane label is set. A narrow border keeps the end of the path."
         },
         {
           "key": "ui.hide_tab_bar_when_single_tab",
